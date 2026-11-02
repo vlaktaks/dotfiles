@@ -23,6 +23,7 @@ alias code='cd ~/Code/ && ls -a'
 alias nanoxmr='/opt/nanominer/nanominer /home/jp/config.ini'
 alias gh-update='cd ~/cli && git pull && make && cp bin/gh ~/.local/bin/gh'
 alias ysap='cd ~/Code/Bash && ls -a'
+alias sab='xdg-open /var/lib/sabnzbd/Downloads/complete'
 
 # ================================================
 # Extra functions for extract and cd
