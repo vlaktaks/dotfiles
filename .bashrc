@@ -54,8 +54,6 @@ function extract() {
   fi
 }
 
-#!/usr/bin/env bash
-
 function create() {
   create_file=$1
   touch "$create_file"
