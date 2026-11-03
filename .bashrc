@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # ================================================
 # This bashRC can kill you! ~ J.P. Ramackers
 # ================================================
@@ -52,11 +54,13 @@ function extract() {
   fi
 }
 
+#!/usr/bin/env bash
+
 function create() {
   create_file=$1
-  touch $create_file
-  echo "#!/usr/bin/env bash" >$create_file
-  chmod +x $create_file
+  touch "$create_file"
+  echo "#!/usr/bin/env bash" >"$create_file"
+  chmod +x "$create_file"
   echo "File with Bash shebang $create_file was created."
 }
 
