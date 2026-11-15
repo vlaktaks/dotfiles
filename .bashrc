@@ -60,11 +60,3 @@ function cd() {
     /bin/ls -lhF --time-style=long-iso --color=auto --ignore=lost+found
 }
 
-# ================================================
-# Ryoku: shell integration, syntax highlighting,
-# and Starship prompt
-# ================================================
-
-if [[ -r /usr/share/ryoku/config/bash/ryoku.bash ]]; then
-  . /usr/share/ryoku/config/bash/ryoku.bash
-fi
