@@ -10,3 +10,6 @@
 ### Changed
 - Standardized directory-listing aliases in `.bashrc` to a single `eza` style (`--icons=always --group-directories-first`) for `ls`, `ll`, `la`, `l`, `lsa`, `lt`, `lta`, and the `code` shortcut, overriding mixed/inconsistent definitions and avoiding GNU `ls`/`eza` flag mixing.
 - Finalized directory listings to a compact icon-and-name-only `eza` style (no metadata/headers) for all listing aliases, removed long-format/tree metadata flags, and removed the custom `cd` function so `cd` uses Bash's builtin behavior without auto-listing.
+
+### Fixed
+- Restored the standard LazyVim dashboard/logo in Neovim by removing the Ryoku dashboard override, and fixed startup failures caused by a broken `plugins.theme` symlink/import path by removing the dangling theme module and disabling the unused Omarchy theme hot-reload hook.
