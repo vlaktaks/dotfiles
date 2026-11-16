@@ -48,21 +48,25 @@ Additional files in `.config/` are included in this repository; link any others 
 
 This repository includes a coordinated, restrained motion-effects setup for Kitty, Bash, and Neovim inspired by the Rundfunk palette (`#D6B45A` gold, cyan accents, red for errors where applicable).
 
+> **Path note:** examples above use `~/.dotfiles`. Ensure `~/.dotfiles` (and your `~/.config/*` symlinks) point to the actual clone of this repository you intend to use; the active Kitty config must load `kitty.conf` and have the `shaders/` directory available from that config location.
+
 ### Kitty
 
 - **Config:** `.config/kitty/kitty.conf`
-- **Custom shader pipelines:** `.config/kitty/shaders/`
-  - `bell-pulse.pipeline` / `bell-pulse.slang`: subtle gold feedback on terminal bell (`bell-in-window` event, short eased animation)
+- **Native cursor trail (text cursor):** enabled with restrained, visible settings and gold `cursor_trail_color` (`#D6B45A`). The trail follows the terminal text cursor (not the mouse pointer), so test it in apps that move the text cursor (e.g. Neovim or cursor movement in the shell).
+- **Command-completion feedback:** native `visual_bell` (gold, short duration) triggered by terminal BEL; works without `shader-slang`/`slangc`.
+- **Custom shader pipelines (kept for compatible environments):** `.config/kitty/shaders/`
+  - `bell-pulse.pipeline` / `bell-pulse.slang`: subtle gold feedback on `bell-in-window`
   - `focus-glow.pipeline` / `focus-glow.slang`: brief cyan accent on `os-window-focus-in` and `tab-change`
-- **Shipped shader used:** `cursor-trail-motion-blur` (loaded via `custom_shaders` for smoother cursor trails)
-- **Native cursor trail:** enabled with restrained `cursor_trail`, decay, start-threshold, and gold `cursor_trail_color`
-- **Loading:** `custom_shaders` references pipeline/shader names resolved from Kitty's config `shaders/` directory (link the full `.config/kitty` directory as shown above so pipelines resolve correctly).
-- **Requirements:** Kitty >= 0.49 for custom shaders/events used here (tested against Kitty 0.49.2).
+  - `cursor-trail-motion-blur` (shipped Kitty shader name) can be used for smoother cursor trails
+- **Loading/activation:** custom `.slang` shaders require `shader-slang` (`slangc`) to compile. Because `slangc` may not be installed (and this repo does not install system packages), `custom_shaders` is commented out by default in `kitty.conf`. Uncomment the `custom_shaders` line when `slangc` is available to enable shader-based bell/focus/motion-blur effects. Shader pipelines resolve from the Kitty config `shaders/` directory, so `~/.config/kitty` must expose both `kitty.conf` and `shaders/` (e.g. symlink the full kitty config directory, or link `shaders/` into the active config directory).
+- **Reload:** after config/symlink changes, reload Kitty config (`Ctrl+Shift+F5` by default, or `kitty @ load-config` if remote control is available) or restart Kitty windows to apply changes.
 
 ### Bash
 
 - **Config:** `.bashrc`
-- **Behavior:** a lightweight `PROMPT_COMMAND` hook emits a single BEL after each executed command to trigger Kitty's bell feedback. The hook captures `$?` first, integrates without replacing existing prompt hooks, and skips the initial prompt to avoid startup bells.
+- **Behavior:** a lightweight `PROMPT_COMMAND` hook emits a single BEL after each executed command to trigger Kitty bell feedback (native visual bell and/or shader-based bell pulse when enabled). The hook captures `$?` first, integrates without replacing existing prompt hooks, and skips the initial prompt to avoid startup bells.
+- **Runtime note:** existing interactive shells must be restarted or run `source ~/.bashrc` to load the hook. A fresh interactive shell should prepend `__dotfiles_bell_prompt` into `PROMPT_COMMAND`.
 - **Limitation:** a BEL event does not distinguish success from failure, so one subtle completion effect is used for all commands (chosen to avoid insecure or complex Kitty remote-control setup).
 
 ### Neovim
