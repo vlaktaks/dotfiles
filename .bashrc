@@ -4,7 +4,23 @@
 # This bashRC can kill you! ~ J.P. Ramackers
 # ================================================
 
+# Omarchy environment (OMARCHY_PATH + PATH).
+# Required even for non-interactive shells.
+if [[ -r /usr/share/omarchy/default/bash/env-bootstrap ]]; then
+  source /usr/share/omarchy/default/bash/env-bootstrap
+fi
+
+# Skip personal configuration in non-interactive shells.
 [[ $- != *i* ]] && return
+
+# Load Omarchy defaults when available.
+if [[ -n ${OMARCHY_PATH:-} && -r "$OMARCHY_PATH/default/bash/rc" ]]; then
+  source "$OMARCHY_PATH/default/bash/rc"
+  # Let the personal cd() function take precedence.
+  unalias cd 2>/dev/null
+fi
+
+# Personal configuration follows below.
 
 export GOBIN="$HOME/.local/bin"
 export PATH="$GOBIN:$PATH"
