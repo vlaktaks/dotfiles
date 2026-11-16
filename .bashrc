@@ -53,17 +53,42 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 export VIRTUAL_ENV_DISABLE_PROMPT=1
 
 # ================================================
+# Directory listings (eza, unified Nerd Font icon style)
+# ================================================
+# One authoritative eza style for all listing aliases (icons always, dirs first).
+# Requires: eza (Arch/Omarchy package). Falls back to GNU ls if unavailable.
+if command -v eza &>/dev/null; then
+  _dotfiles_eza=(eza --icons=always --group-directories-first)
+  _dotfiles_eza_long=(--long --header --binary --time-style=long-iso)
+
+  alias ls='eza --icons=always --group-directories-first'
+  alias l='eza --icons=always --group-directories-first --long --header --binary --time-style=long-iso'
+  alias ll='eza --icons=always --group-directories-first --long --header --binary --time-style=long-iso'
+  alias la='eza --icons=always --group-directories-first --all'
+  alias lsa='eza --icons=always --group-directories-first --all'
+  alias lt='eza --icons=always --group-directories-first --long --header --binary --time-style=long-iso --tree --level=2 --git'
+  alias lta='eza --icons=always --group-directories-first --long --header --binary --time-style=long-iso --tree --level=2 --git --all'
+
+  # Custom shortcut: jump to ~/Code and show a consistent listing (no VS Code editor installed).
+  alias code='cd ~/Code/ && eza --icons=always --group-directories-first --all'
+
+  unset _dotfiles_eza _dotfiles_eza_long
+else
+  alias ll='ls -lh --color=auto'
+  alias la='ls -A --color=auto'
+  alias l='ls -lh --color=auto'
+  alias code='cd ~/Code/ && ls -A --color=auto'
+fi
+
+# ================================================
 # Extra aliases
 # ================================================
 
-alias ll='ls -lah --color=auto'
-alias la='ls -A'
 alias update='sudo pacman -Syu'
 alias fix='source ~/.bashrc'
-alias code='cd ~/Code/ && ls -a'
 alias nanoxmr='/opt/nanominer/nanominer /home/jp/config.ini'
 alias gh-update='cd ~/cli && git pull && make && cp bin/gh ~/.local/bin/gh'
-alias ysap='cd ~/Code/Bash && ls -a'
+alias ysap='cd ~/Code/Bash && eza --icons=always --group-directories-first --all'
 alias sab='xdg-open /var/lib/sabnzbd/Downloads/complete'
 
 # ================================================

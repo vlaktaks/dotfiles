@@ -67,7 +67,9 @@ This repository includes a coordinated, restrained motion-effects setup for Kitt
 
 - **Config:** `.bashrc`
 - **Behavior:** a lightweight `PROMPT_COMMAND` hook remains integrated without replacing existing prompt hooks (captures `$?` first, skips the initial prompt, preserves exit status) but intentionally does **not** emit BEL, so ordinary command completion does not trigger visual-bell flashes.
-- **Runtime note:** existing interactive shells must be restarted or run `source ~/.bashrc` to load hook changes.
+- **Directory listings (eza, unified):** `ls`, `ll`, `la`, `l`, `lsa`, `lt`, `lta`, and the `code` shortcut use a single `eza` style with **Nerd Font icons enabled** (`--icons=always`), **directories grouped first** (`--group-directories-first`), and consistent long/detail formatting where applicable. Omarchy-provided eza aliases are overridden in `~/.bashrc` to keep one authoritative style (no mixed GNU `ls`/`eza` flags). Colors follow terminal/`eza` defaults for the active theme; no separate hardcoded palette is forced.
+- **Dependency:** `eza` (installed via the system package manager, e.g. on Arch/Omarchy). If `eza` is unavailable, `.bashrc` falls back to GNU `ls`-based aliases.
+- **Runtime note:** existing interactive shells must be restarted or run `source ~/.bashrc` to load changes.
 
 ### ble.sh (Bash syntax highlighting)
 
