@@ -1,4 +1,0 @@
-7zip
-go
-ncompress
-unace
