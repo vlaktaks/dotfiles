@@ -1,0 +1,1 @@
+/home/jp/.dotfiles/.config/kitty/paste_handler.py
