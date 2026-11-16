@@ -39,8 +39,9 @@ fi
 # Load Omarchy defaults when available.
 if [[ -n ${OMARCHY_PATH:-} && -r "$OMARCHY_PATH/default/bash/rc" ]]; then
   source "$OMARCHY_PATH/default/bash/rc"
-  # Let the personal cd() function take precedence.
+  # Restore Bash's builtin cd behavior (no auto-listing side effects).
   unalias cd 2>/dev/null
+  unset -f cd 2>/dev/null
 fi
 
 # Personal configuration follows below.
@@ -53,31 +54,28 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 export VIRTUAL_ENV_DISABLE_PROMPT=1
 
 # ================================================
-# Directory listings (eza, unified Nerd Font icon style)
+# Directory listings (eza, compact Nerd Font icon style)
 # ================================================
-# One authoritative eza style for all listing aliases (icons always, dirs first).
+# One authoritative compact style for all listing aliases: icons and names only.
 # Requires: eza (Arch/Omarchy package). Falls back to GNU ls if unavailable.
 if command -v eza &>/dev/null; then
-  _dotfiles_eza=(eza --icons=always --group-directories-first)
-  _dotfiles_eza_long=(--long --header --binary --time-style=long-iso)
-
   alias ls='eza --icons=always --group-directories-first'
-  alias l='eza --icons=always --group-directories-first --long --header --binary --time-style=long-iso'
-  alias ll='eza --icons=always --group-directories-first --long --header --binary --time-style=long-iso'
+  alias ll='eza --icons=always --group-directories-first'
+  alias l='eza --icons=always --group-directories-first'
   alias la='eza --icons=always --group-directories-first --all'
   alias lsa='eza --icons=always --group-directories-first --all'
-  alias lt='eza --icons=always --group-directories-first --long --header --binary --time-style=long-iso --tree --level=2 --git'
-  alias lta='eza --icons=always --group-directories-first --long --header --binary --time-style=long-iso --tree --level=2 --git --all'
+  alias lt='eza --icons=always --group-directories-first --tree --level=2'
+  alias lta='eza --icons=always --group-directories-first --tree --level=2 --all'
 
-  # Custom shortcut: jump to ~/Code and show a consistent listing (no VS Code editor installed).
+  # Custom shortcut: jump to ~/Code and show a compact listing (no VS Code editor installed).
   alias code='cd ~/Code/ && eza --icons=always --group-directories-first --all'
-
-  unset _dotfiles_eza _dotfiles_eza_long
 else
-  alias ll='ls -lh --color=auto'
-  alias la='ls -A --color=auto'
-  alias l='ls -lh --color=auto'
-  alias code='cd ~/Code/ && ls -A --color=auto'
+  alias ls='ls --color=auto --group-directories-first'
+  alias ll='ls --color=auto --group-directories-first'
+  alias l='ls --color=auto --group-directories-first'
+  alias la='ls --color=auto --group-directories-first -A'
+  alias lsa='ls --color=auto --group-directories-first -A'
+  alias code='cd ~/Code/ && ls --color=auto --group-directories-first -A'
 fi
 
 # ================================================
@@ -92,7 +90,7 @@ alias ysap='cd ~/Code/Bash && eza --icons=always --group-directories-first --all
 alias sab='xdg-open /var/lib/sabnzbd/Downloads/complete'
 
 # ================================================
-# Extra functions for extract and cd
+# Extra functions
 # ================================================
 
 function extract() {
@@ -116,12 +114,6 @@ function extract() {
   else
     echo "'$1' is not a valid file"
   fi
-}
-
-function cd() {
-  local new_directory="${*:-$HOME}"
-  builtin cd "$new_directory" &&
-    /bin/ls -lhF --time-style=long-iso --color=auto --ignore=lost+found
 }
 
 # ================================================
