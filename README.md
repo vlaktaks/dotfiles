@@ -34,6 +34,7 @@ mkdir -p ~/.config/lazygit ~/.config/hypr ~/.config/omarchy
 
 ln -sfn ~/.dotfiles/.config/nvim ~/.config/nvim
 ln -sfn ~/.dotfiles/.config/kitty ~/.config/kitty
+ln -sfn ~/.dotfiles/.config/blesh ~/.config/blesh
 ln -sfn ~/.dotfiles/.config/lazygit/config.yml ~/.config/lazygit/config.yml
 
 # Hyprland / Omarchy (Flea as default file manager)
@@ -67,6 +68,19 @@ This repository includes a coordinated, restrained motion-effects setup for Kitt
 - **Config:** `.bashrc`
 - **Behavior:** a lightweight `PROMPT_COMMAND` hook remains integrated without replacing existing prompt hooks (captures `$?` first, skips the initial prompt, preserves exit status) but intentionally does **not** emit BEL, so ordinary command completion does not trigger visual-bell flashes.
 - **Runtime note:** existing interactive shells must be restarted or run `source ~/.bashrc` to load hook changes.
+
+### ble.sh (Bash syntax highlighting)
+
+- **Program (outside repo):** [ble.sh](https://github.com/akinomyoga/ble.sh) (Bash Line Editor) provides interactive command-line syntax highlighting and line-editing enhancements.
+- **Version/selection:** use a maintained ble.sh 0.4 devel/nightly build (not the outdated stable 0.3.4 release). In this environment, `blesh-git` 0.4.0-devel4+15294275 was installed to `~/.local/share/blesh` (user-level). Upstream currently distributes 0.4 as devel/nightly builds.
+- **Install (reproducible):**
+  - **Arch/AUR (preferred on Omarchy):** install `blesh-git` via an AUR helper, e.g. `yay -S blesh-git` (or `paru -S blesh-git`). This installs ble.sh to `/usr/share/blesh/ble.sh` (package-managed, outside this repo). Review the AUR package/build before installing.
+  - **User-level (no root required):** install to `~/.local/share/blesh/ble.sh` (outside this repo), e.g. from the upstream nightly tarball as documented by ble.sh:
+    - `curl -L https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz | tar xJf -`
+    - `bash ble-nightly/ble.sh --install ~/.local/share`
+- **Repository config (authoritative):** `.config/blesh/init.sh` (theme-matched `ble-face` settings). Link `~/.config/blesh` to this dotfiles config as shown above; `.bashrc` passes it to ble.sh via `--rcfile` when available.
+- **Bash integration:** `.bashrc` sources ble.sh for interactive Bash sessions only (checks TTY and readable install paths: `/usr/share/blesh/ble.sh`, `${XDG_DATA_HOME:-~/.local/share}/blesh/ble.sh`) with `--attach=none` early in interactive startup and `ble-attach` at the very end. Missing installations are skipped gracefully without breaking Bash startup. Existing Omarchy/Starship initialization, `PROMPT_COMMAND` hooks/order, exit-status handling, aliases/functions/PATH/completions, and non-BEL terminal behavior are preserved. Inline auto-suggestions are disabled (`complete_auto_complete=`) to keep input clean; syntax highlighting is the primary feature.
+- **Palette (mapped to active Kitty/Rundfunk theme):** faces in `.config/blesh/init.sh` use the active theme colors as source of truth (e.g. fg `#d7dde8`, bg `#101216`, muted `#3a4352`/`#8b98aa`, cyan/blue accents `#59d9e6`/`#56e6d8`, green strings/valid files `#7ee787`, yellow vars `#ffd479`, magenta keywords/escapes `#ff6ac1`, red errors/invalid `#ff5c7a`, gold functions `#d6b45a`) with restrained, readable styling (no bright full-background error flashes). Actual on-screen colors/rendering require interactive Kitty verification.
 
 ### Neovim
 

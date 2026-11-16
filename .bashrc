@@ -13,6 +13,29 @@ fi
 # Skip personal configuration in non-interactive shells.
 [[ $- != *i* ]] && return
 
+# ble.sh (Bash Line Editor): syntax highlighting and line editing enhancements.
+# Load early in interactive startup and attach at end of .bashrc (upstream-recommended).
+# Gracefully skip if not installed (package-managed or user-level install).
+if [[ -z ${BLE_VERSION-} ]]; then
+  _dotfiles_blesh_candidates=(
+    "/usr/share/blesh/ble.sh"
+    "${XDG_DATA_HOME:-$HOME/.local/share}/blesh/ble.sh"
+  )
+  for _dotfiles_blesh_path in "${_dotfiles_blesh_candidates[@]}"; do
+    if [[ -r $_dotfiles_blesh_path && -t 0 && -t 1 && -t 2 ]]; then
+      # Use dotfiles-managed config when available (authoritative source of truth).
+      _dotfiles_blesh_rc="${XDG_CONFIG_HOME:-$HOME/.config}/blesh/init.sh"
+      if [[ -r $_dotfiles_blesh_rc ]]; then
+        source -- "$_dotfiles_blesh_path" --attach=none --rcfile "$_dotfiles_blesh_rc"
+      else
+        source -- "$_dotfiles_blesh_path" --attach=none
+      fi
+      break
+    fi
+  done
+  unset _dotfiles_blesh_path _dotfiles_blesh_candidates _dotfiles_blesh_rc
+fi
+
 # Load Omarchy defaults when available.
 if [[ -n ${OMARCHY_PATH:-} && -r "$OMARCHY_PATH/default/bash/rc" ]]; then
   source "$OMARCHY_PATH/default/bash/rc"
@@ -101,4 +124,7 @@ if [[ $- == *i* && -z ${__DOTFILES_BELL_PROMPT_LOADED+x} ]]; then
 
   PROMPT_COMMAND="__dotfiles_bell_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 fi
+
+# Attach ble.sh after all interactive initialization and prompt hooks are configured.
+[[ ${BLE_VERSION-} ]] && ble-attach
 
