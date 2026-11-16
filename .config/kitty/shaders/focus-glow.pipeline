@@ -1,0 +1,8 @@
+# Brief, restrained highlight on focus/tab changes.
+startgroup
+    animation_start os-window-focus-in|tab-change
+    animation_stop 180
+    animation_curve ease-out
+    animation_step 16
+    shaders focus-glow
+endgroup
