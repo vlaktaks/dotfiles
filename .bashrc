@@ -77,11 +77,12 @@ function cd() {
 }
 
 # ================================================
-# Subtle command completion feedback (Kitty bell)
+# Command completion hook (reserved for future subtle feedback)
 # ================================================
-# Emits a single BEL after command execution to trigger Kitty's bell-pulse shader.
-# Integrated without replacing existing PROMPT_COMMAND hooks (e.g. starship/Omarchy).
-# Captures $? first so the command's exit status is preserved.
+# A BEL-based visual completion flash was intentionally disabled because Kitty's
+# native visual bell causes a distracting full-window flash for ordinary commands.
+# The hook remains integrated without replacing existing PROMPT_COMMAND hooks and
+# preserves the command's exit status.
 if [[ $- == *i* && -z ${__DOTFILES_BELL_PROMPT_LOADED+x} ]]; then
   __DOTFILES_BELL_PROMPT_LOADED=1
   __dotfiles_bell_last_hist=${HISTCMD:-0}
@@ -90,13 +91,9 @@ if [[ $- == *i* && -z ${__DOTFILES_BELL_PROMPT_LOADED+x} ]]; then
     local status=$?
     local current_hist=${HISTCMD:-0}
 
-    # Skip the initial prompt; only notify after an actual command line executed.
+    # Track executed command lines (initial prompt skipped) without emitting BEL.
     if [[ $current_hist -ne $__dotfiles_bell_last_hist ]]; then
       __dotfiles_bell_last_hist=$current_hist
-      # BEL is the notification mechanism; Kitty can react via bell-in-window shader events.
-      # A single event cannot reliably distinguish success from failure, so one subtle
-      # completion effect is used for all commands.
-      printf '\a'
     fi
 
     return "$status"

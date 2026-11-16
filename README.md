@@ -54,27 +54,26 @@ This repository includes a coordinated, restrained motion-effects setup for Kitt
 
 - **Config:** `.config/kitty/kitty.conf`
 - **Native cursor trail (text cursor):** enabled with restrained, visible settings and gold `cursor_trail_color` (`#D6B45A`). The trail follows the terminal text cursor (not the mouse pointer), so test it in apps that move the text cursor (e.g. Neovim or cursor movement in the shell).
-- **Command-completion feedback:** native `visual_bell` (gold, short duration) triggered by terminal BEL; works without `shader-slang`/`slangc`.
+- **Bell/visual feedback:** audio bell and visual bell flashes are disabled (`enable_audio_bell no`, `visual_bell_duration 0.0`, `visual_bell_color none`, `window_alert_on_bell no`) to avoid distracting full-window flashes (including on ordinary commands). BEL-based completion feedback is intentionally not emitted.
 - **Custom shader pipelines (kept for compatible environments):** `.config/kitty/shaders/`
   - `bell-pulse.pipeline` / `bell-pulse.slang`: subtle gold feedback on `bell-in-window`
   - `focus-glow.pipeline` / `focus-glow.slang`: brief cyan accent on `os-window-focus-in` and `tab-change`
   - `cursor-trail-motion-blur` (shipped Kitty shader name) can be used for smoother cursor trails
-- **Loading/activation:** custom `.slang` shaders require `shader-slang` (`slangc`) to compile. Because `slangc` may not be installed (and this repo does not install system packages), `custom_shaders` is commented out by default in `kitty.conf`. Uncomment the `custom_shaders` line when `slangc` is available to enable shader-based bell/focus/motion-blur effects. Shader pipelines resolve from the Kitty config `shaders/` directory, so `~/.config/kitty` must expose both `kitty.conf` and `shaders/` (e.g. symlink the full kitty config directory, or link `shaders/` into the active config directory).
+- **Loading/activation:** custom `.slang` shaders require `shader-slang` (`slangc`) to compile. Because `slangc` may not be installed (and this repo does not install system packages), `custom_shaders` is commented out by default in `kitty.conf`. Uncomment the `custom_shaders` line when `slangc` is available to enable shader-based effects. Shader pipelines resolve from the Kitty config `shaders/` directory, so `~/.config/kitty` must expose both `kitty.conf` and `shaders/`.
 - **Reload:** after config/symlink changes, reload Kitty config (`Ctrl+Shift+F5` by default, or `kitty @ load-config` if remote control is available) or restart Kitty windows to apply changes.
 
 ### Bash
 
 - **Config:** `.bashrc`
-- **Behavior:** a lightweight `PROMPT_COMMAND` hook emits a single BEL after each executed command to trigger Kitty bell feedback (native visual bell and/or shader-based bell pulse when enabled). The hook captures `$?` first, integrates without replacing existing prompt hooks, and skips the initial prompt to avoid startup bells.
-- **Runtime note:** existing interactive shells must be restarted or run `source ~/.bashrc` to load the hook. A fresh interactive shell should prepend `__dotfiles_bell_prompt` into `PROMPT_COMMAND`.
-- **Limitation:** a BEL event does not distinguish success from failure, so one subtle completion effect is used for all commands (chosen to avoid insecure or complex Kitty remote-control setup).
+- **Behavior:** a lightweight `PROMPT_COMMAND` hook remains integrated without replacing existing prompt hooks (captures `$?` first, skips the initial prompt, preserves exit status) but intentionally does **not** emit BEL, so ordinary command completion does not trigger visual-bell flashes.
+- **Runtime note:** existing interactive shells must be restarted or run `source ~/.bashrc` to load hook changes.
 
 ### Neovim
 
 - **Plugin manager/config:** LazyVim + `lazy.nvim` (`.config/nvim/init.lua`, `.config/nvim/lua/config/lazy.lua`, plugin specs in `.config/nvim/lua/plugins/`)
-- **Animations:** `nvim-mini/mini.animate` (`lua/plugins/mini-animate.lua`) for cursor movement, scrolling, window resize, and window open/close with short timings. Snacks animated scrolling remains disabled (`snacks-animated-scrolling-off.lua`) to avoid overlap.
+- **Animations:** `nvim-mini/mini.animate` (`lua/plugins/mini-animate.lua`, `opts` as a function to avoid premature `require`) for cursor movement, scrolling, window resize, and window open/close with short timings. Snacks animated scrolling remains disabled (`snacks-animated-scrolling-off.lua`) to avoid overlap.
 - **Transient highlights:** `rachartier/tiny-glimmer.nvim` (`lua/plugins/tiny-glimmer.lua`) for yank, paste, undo, and redo with short Rundfunk-inspired gold/cyan fades.
-- **Requirements:** Neovim 0.10+ recommended for `tiny-glimmer.nvim`; `mini.animate` requires a recent Neovim/LazyVim setup. Plugins install/load via the existing lazy.nvim configuration on next Neovim start.
+- **Requirements:** Neovim 0.10+ recommended for `tiny-glimmer.nvim`; `mini.animate` requires a recent Neovim/LazyVim setup. Plugins install/load via the existing lazy.nvim configuration (e.g. install missing plugins on startup or via Lazy).
 
 ### Notes
 
