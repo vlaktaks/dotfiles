@@ -33,21 +33,36 @@ The repository-managed `.bashrc`:
 
 ### 3. Install packages
 
-`list.txt` (at the repository root) lists additional package dependencies required by the configuration and tooling represented in this repository, one package name per line. It is intended to be installed in a single operation.
+Package dependencies required by the configuration and tooling represented in this repository are maintained as simple, root-level inventories (one package name per line):
 
-**Repositories/package manager:** Package names are Arch Linux packages from the configured official repositories (as available on Omarchy). The one-shot command below uses `yay`, which is the package helper available on Omarchy and can install packages from official repositories (and from the AUR when AUR package names are included). The current `list.txt` contains official-repository packages only.
+- **`list.txt`** — packages from the official Arch repositories (as configured on Omarchy).
+- **`aur-list.txt`** — AUR-only packages (if any). Currently empty; no AUR-only dependencies were identified.
 
-**Prerequisites:** A working Omarchy/Arch package environment with `yay` installed and network access to the configured repositories. No `curl`-based installation or remote installer scripts are used.
+**Prerequisites:** A working Omarchy/Arch package environment with network access to the configured repositories. `yay` is used by Omarchy's AUR helper and is available on Omarchy. No `curl`-based installation, remote shell execution, or downloaded installer scripts are used.
 
-**One-shot installation command (Omarchy 4.5):**
+**One-shot installation (Omarchy 4.5, copy/paste):**
+
+Install all official-repository packages (preferred Omarchy native command):
 
 ```bash
-yay -S --needed -- $(grep -vE '^\s*(#|$)' ~/.dotfiles/list.txt)
+omarchy pkg add $(grep -vE '^\s*(#|$)' ~/.dotfiles/list.txt)
 ```
 
-Run this from `bash` (so command substitution works). It installs all packages listed in `list.txt` in one operation, skipping packages that are already installed (`--needed`).
+Install all AUR packages, if `aur-list.txt` contains any (Omarchy AUR wrapper):
 
-> Note: Omarchy provides `omarchy pkg add <packages...>` for installing named Arch packages and `omarchy pkg aur add <packages...>` for AUR packages, but neither accepts a package-list file. The command above is the straightforward one-shot way to install the contents of `list.txt`.
+```bash
+[ -s ~/.dotfiles/aur-list.txt ] && omarchy pkg aur add $(grep -vE '^\s*(#|$)' ~/.dotfiles/aur-list.txt)
+```
 
-**Optional / alias-specific tools (not listed in `list.txt`):** Some entries in `.bashrc` are personal conveniences that rely on tools not included as required packages here, for example: `git`/`make` (used by the `gh-update` alias; commonly present via Omarchy/base development tools), `xdg-open` (used by the `sab` alias), `pacman` (system package manager), and locally installed/personal binaries such as `/opt/nanominer/nanominer` or a local `sabnzbd` downloads path. The `extract()` function's `.rar` case invokes `unrar2dir` as written; that specific helper is not provided by a standard package and is not included in `list.txt` (the general `unrar` package provides `unrar`, not `unrar2dir`). Common archive tools already provided by a typical Omarchy/base system (e.g. `tar`, `bzip2`, `gzip`, `unzip`) are not duplicated in `list.txt`.
+Run these from `bash` (command substitution expands the full list into one invocation). `omarchy pkg add` installs missing official packages via `pacman` (`--needed`) with appropriate privilege handling; `omarchy pkg aur add` installs missing AUR packages via `yay` (`--needed`). Neither command accepts a package-list file, so the list contents are passed as arguments in one go.
+
+**Alternative (package-manager commands):**
+
+```bash
+sudo pacman -S --needed -- $(grep -vE '^\s*(#|$)' ~/.dotfiles/list.txt)
+[ -s ~/.dotfiles/aur-list.txt ] && yay -S --needed -- $(grep -vE '^\s*(#|$)' ~/.dotfiles/aur-list.txt)
+```
+
+**Optional / alias-specific tools (not in the package lists):** Some `.bashrc` entries are personal conveniences that rely on tools not included as required packages here, for example: `git`/`make` (used by the `gh-update` alias; commonly present via Omarchy/base development tools), `xdg-open` (used by the `sab` alias), `pacman` (system package manager), and locally installed/personal binaries or paths such as `/opt/nanominer/nanominer` or a local `sabnzbd` downloads directory. The `extract()` function's `.rar` case invokes `unrar2dir` as written; that specific helper is not provided by a standard package and is not included (the general `unrar` package provides `unrar`, not `unrar2dir`). Common archive/system tools already supplied by a typical Omarchy/base installation (e.g. `tar`, `bzip2`, `gzip`, `unzip`) are not duplicated in the lists.
+
 
