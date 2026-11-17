@@ -1,0 +1,8 @@
+# Subtle command-completion feedback triggered by a terminal bell.
+startgroup
+    animation_start bell-in-window
+    animation_stop 220
+    animation_curve ease-out
+    animation_step 16
+    shaders bell-pulse
+endgroup
