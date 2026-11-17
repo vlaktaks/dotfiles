@@ -1,0 +1,29 @@
+{
+  "generatedNote": "Pinned upstream sources vendored/referenced by this dotfiles repo. Update scripts should refresh these intentionally.",
+  "sources": {
+    "ponytail": {
+      "repo": "https://github.com/DietrichGebert/ponytail",
+      "commit": "96608e078b2d5ea607c5c3b8b5a54d1c1fba6846",
+      "npm": "@dietrichgebert/ponytail@5.3.3",
+      "localPath": "sources/ponytail"
+    },
+    "omniroute": {
+      "repo": "https://github.com/cheaper-inference/OmniRoute",
+      "commit": "4b9fc08ad6fb09b3a456c91bde6405b7007c8034",
+      "npm": "omniroute@3.8.53",
+      "opencodePluginV2": "@omniroute/opencode-plugin-v2@0.1.0",
+      "localPath": null
+    },
+    "graphify": {
+      "repo": "https://github.com/Graphify-Labs/graphify",
+      "commit": "480b61ed91cbc08177dc2c60caa9ffd6c9b95749",
+      "pypi": "graphifyy (CLI name: graphify)",
+      "localPath": "sources/graphify"
+    },
+    "addyosmani-agent-skills": {
+      "repo": "https://github.com/addyosmani/agent-skills",
+      "commit": "39b723ceebf81474d0557c1fecd01eddab585563",
+      "localPath": "sources/addyosmani-agent-skills"
+    }
+  }
+}

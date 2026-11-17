@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+REPO_ROOT="${1:?repo root required}"
+source "$(dirname "$0")/lib.sh"
+
+fail=0
+pass() { ok "VERIFY: $*"; }
+failmsg() { err "VERIFY: $*"; fail=1; }
+warnmsg() { warn "VERIFY: $*"; }
+
+LIVE_OC="$HOME/.config/opencode"
+MANAGED_OC="$REPO_ROOT/.config/opencode"
+
+# OpenCode config parses
+if have_cmd node && [[ -f "$LIVE_OC/opencode.json" ]]; then
+  if node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$LIVE_OC/opencode.json" >/dev/null 2>&1; then
+    pass "~/.config/opencode/opencode.json parses as JSON"
+  else
+    failmsg "~/.config/opencode/opencode.json is not valid JSON"
+  fi
+else
+  warnmsg "cannot validate opencode.json (node or file missing)"
+fi
+
+# AGENTS.md
+if [[ -L "$LIVE_OC/AGENTS.md" ]]; then
+  tgt="$(readlink -f "$LIVE_OC/AGENTS.md" || true)"
+  if [[ "$tgt" == "$(readlink -f "$MANAGED_OC/AGENTS.md")" ]]; then
+    pass "OpenCode AGENTS.md symlinked to managed file"
+  else
+    warnmsg "OpenCode AGENTS.md symlink target unexpected: $tgt"
+  fi
+elif [[ -f "$LIVE_OC/AGENTS.md" ]]; then
+  warnmsg "OpenCode AGENTS.md exists but is not a symlink to managed file"
+else
+  failmsg "OpenCode AGENTS.md missing"
+fi
+
+# Skills: all managed skills linked and contain SKILL.md
+managed_count=0
+linked_ok=0
+missing_skill=0
+shopt -s nullglob
+for src in "$MANAGED_OC/skills"/*; do
+  [[ -d "$src" ]] || continue
+  name="$(basename "$src")"
+  managed_count=$((managed_count+1))
+  dst="$LIVE_OC/skills/$name"
+  if [[ -L "$dst" ]] && [[ "$(readlink -f "$dst" || true)" == "$(readlink -f "$src")" ]]; then
+    linked_ok=$((linked_ok+1))
+  else
+    warnmsg "skill not correctly symlinked: $name"
+  fi
+  if [[ ! -f "$dst/SKILL.md" && ! -f "$src/SKILL.md" ]]; then
+    failmsg "skill missing SKILL.md: $name"
+    missing_skill=$((missing_skill+1))
+  fi
+done
+shopt -u nullglob
+if (( managed_count == linked_ok && managed_count > 0 && missing_skill == 0 )); then
+  pass "all managed skills linked with SKILL.md present ($managed_count)"
+else
+  warnmsg "managed=$managed_count linked_ok=$linked_ok missing_skillmd=$missing_skill"
+fi
+
+# Key skills present
+for s in ponytail ponytail-review ponytail-audit ponytail-debt ponytail-gain ponytail-help graphify spec-driven-development; do
+  [[ -f "$LIVE_OC/skills/$s/SKILL.md" ]] && pass "skill discoverable: $s" || failmsg "skill missing: $s"
+done
+
+# Plugin configured (no duplicates for ponytail entry as string/object in simple cases)
+if have_cmd node && [[ -f "$LIVE_OC/opencode.json" ]]; then
+  node - "$LIVE_OC/opencode.json" <<'NODE' >/tmp/dotfiles-verify-plugin.txt 2>/dev/null || true
+import fs from 'node:fs';
+const p=process.argv[2];
+const j=JSON.parse(fs.readFileSync(p,'utf8'));
+const plugins=[...(Array.isArray(j.plugins)?j.plugins:[]), ...(Array.isArray(j.plugin)?j.plugin:[])];
+const hits=plugins.filter(x=> (typeof x==='string' && x.includes('@dietrichgebert/ponytail')) || (x && typeof x==='object' && JSON.stringify(x).includes('@dietrichgebert/ponytail')));
+console.log(hits.length);
+NODE
+  hits="$(cat /tmp/dotfiles-verify-plugin.txt 2>/dev/null || echo 0)"
+  if [[ "$hits" == "1" ]]; then
+    pass "Ponytail plugin configured exactly once in opencode.json"
+  elif [[ "$hits" =~ ^[0-9]+$ ]] && (( hits > 1 )); then
+    warnmsg "Ponytail plugin appears $hits times in opencode.json"
+  else
+    failmsg "Ponytail plugin not found in opencode.json"
+  fi
+fi
+
+# Binaries
+have_cmd opencode && pass "opencode CLI available ($(opencode --version 2>/dev/null | head -n1))" || warnmsg "opencode CLI not on PATH"
+have_cmd omniroute && pass "omniroute CLI available ($(command -v omniroute))" || warnmsg "omniroute CLI not installed/on PATH"
+have_cmd graphify && pass "graphify CLI available ($(graphify --help 2>/dev/null | head -n1 || echo installed))" || warnmsg "graphify CLI not installed/on PATH"
+
+# systemd unit (created by installer; should exist but not be enabled/started)
+if [[ -f "$HOME/.config/systemd/user/omniroute.service" ]]; then
+  pass "omniroute systemd user unit present"
+  if have_cmd systemctl; then
+    en="$(systemctl --user is-enabled omniroute 2>/dev/null || true)"
+    ac="$(systemctl --user is-active omniroute 2>/dev/null || true)"
+    [[ "$en" == "enabled" ]] && warnmsg "omniroute.service is enabled (manual opt-in expected)" || pass "omniroute.service not enabled ($en)"
+    [[ "$ac" == "active" ]] && warnmsg "omniroute.service is active" || pass "omniroute.service not active ($ac)"
+  fi
+else
+  warnmsg "omniroute systemd user unit not found"
+fi
+
+# OmniRoute health (non-fatal/runtime-dependent)
+if have_cmd curl; then
+  if curl -fsS "http://127.0.0.1:${OMNIROUTE_PORT:-20128}/" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:${OMNIROUTE_PORT:-20128}/v1/models" >/dev/null 2>&1; then
+    pass "OmniRoute endpoint reachable locally"
+  else
+    warnmsg "OmniRoute not reachable on localhost:${OMNIROUTE_PORT:-20128} (service may not be running)"
+  fi
+fi
+
+# Secret hygiene (paths only, no content)
+[[ -f "$LIVE_OC/service.json" ]] && pass "local OpenCode service.json present (untracked/local secret-bearing file expected)" || true
+[[ -f "$HOME/.config/omniroute/omniroute.env" ]] && warnmsg "private OmniRoute env file exists (ensure chmod 600, never commit)" || pass "no ~/.config/omniroute/omniroute.env found (credentials not configured yet, expected)"
+
+if (( fail )); then
+  warn "Verification completed with issues"
+  exit 1
+fi
+ok "Verification checks passed (review warnings for manual/runtime items)"

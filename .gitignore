@@ -12,3 +12,13 @@
 
 pkg/
 src/
+
+# Secrets / local-only
+.env
+.env.*
+*.key
+*.pem
+*secret*
+*credentials*
+.opencode/service.json
+.config/opencode/service.json
