@@ -14,14 +14,14 @@ export HOME="$TMP/home"
 mkdir -p "$HOME/.config/opencode/skills/my-local-skill"
 printf '# local skill\n' > "$HOME/.config/opencode/skills/my-local-skill/SKILL.md"
 
-if [[ -f "$SKILL_DIR/install/opencode.sh" ]]; then
-  MODE="standalone"
-  REPO_ROOT="$SKILL_DIR"
-elif [[ -f "$SKILL_DIR/../../../../install/opencode.sh" ]]; then
+if [[ -f "$SKILL_DIR/../../../../install/opencode.sh" ]]; then
   MODE="dotfiles"
   REPO_ROOT="$(cd -- "$SKILL_DIR/../../../.." && pwd -P)"
+elif [[ -f "$SKILL_DIR/SKILL.md" ]]; then
+  MODE="standalone"
+  REPO_ROOT="$SKILL_DIR"
 else
-  fail "cannot locate install/opencode.sh or standalone skill root from $SKILL_DIR"
+  fail "cannot locate the dotfiles root or a standalone SKILL.md from $SKILL_DIR"
 fi
 
 LINK="$HOME/.config/opencode/skills/linux-security-check"
