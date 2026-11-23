@@ -14,6 +14,7 @@ ensure_dotfiles_link "$REPO_ROOT"
 ensure_base_dirs
 
 run_step "OpenCode base config/skills" "$SCRIPT_DIR/opencode.sh" "$REPO_ROOT"
+run_step "Linux-Security-Check skill" "$SCRIPT_DIR/linux-security-check.sh" "$REPO_ROOT"
 run_step "Ponytail" "$SCRIPT_DIR/ponytail.sh" "$REPO_ROOT"
 run_step "OmniRoute" "$SCRIPT_DIR/omniroute.sh" "$REPO_ROOT"
 run_step "Graphify" "$SCRIPT_DIR/graphify.sh" "$REPO_ROOT"

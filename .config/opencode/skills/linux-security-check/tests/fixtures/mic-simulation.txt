@@ -1,0 +1,27 @@
+Simulated microphone/privacy evidence (inert fixture, never executed).
+
+pw-dump excerpt:
+  node.name = "alsa_input.pci-0000_00_1f.3.analog-stereo"
+  node.description = "Built-in Audio Analog Stereo"
+  media.class = "Audio/Source"
+  audio.mute = false
+
+pactl list short source-outputs:
+  42	0	1234	protocol-native.c	s16le 1ch 48000Hz
+
+application.name = "unknown-recorder"
+application.process.id = 1234
+application.process.binary = "unknown-recorder"
+
+ps -p 1234 -o pid,user,args:
+  1234 jp /tmp/unknown-recorder --quiet
+
+ss -tupn:
+  tcp ESTAB 0 0 10.0.0.5:51234 198.51.100.7:443 users:(("unknown-recorder",pid=1234,fd=7))
+
+Interpretation for tests:
+  - Microphone available and unmuted.
+  - Active capture client observed (PID 1234).
+  - One established TLS connection observed from the same PID.
+  - Payload contents are not visible; audio transmission is NOT confirmed.
+  - This is consistent with exfiltration and warrants further investigation.

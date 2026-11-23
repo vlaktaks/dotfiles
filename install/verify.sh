@@ -63,8 +63,60 @@ else
   warnmsg "managed=$managed_count linked_ok=$linked_ok missing_skillmd=$missing_skill"
 fi
 
+# Linux-Security-Check: structure, frontmatter, references, scripts, symlink
+LSC_SRC="$MANAGED_OC/skills/linux-security-check"
+LSC_DST="$LIVE_OC/skills/linux-security-check"
+lsc_required=(
+  SKILL.md
+  references/linux-audit.md
+  references/malware-analysis.md
+  references/omarchy-plugin-audit.md
+  references/software-supply-chain.md
+  references/update-risk.md
+  references/privacy-audit.md
+  references/report-format.md
+  scripts/scan-patterns.py
+  scripts/check-omarchy-manifest.py
+  scripts/report.py
+  tests/run-all.sh
+)
+if [[ -f "$LSC_SRC/SKILL.md" ]]; then
+  pass "Linux-Security-Check skill present in repository"
+  grep -q '^name: Linux-Security-Check$' "$LSC_SRC/SKILL.md" \
+    && pass "Linux-Security-Check frontmatter name is valid" \
+    || failmsg "Linux-Security-Check frontmatter name is invalid"
+  grep -q '^description: .*' "$LSC_SRC/SKILL.md" \
+    && pass "Linux-Security-Check frontmatter description present" \
+    || failmsg "Linux-Security-Check frontmatter description missing"
+  for rel in "${lsc_required[@]}"; do
+    [[ -f "$LSC_SRC/$rel" ]] || failmsg "Linux-Security-Check missing: $rel"
+  done
+  if [[ -L "$LSC_DST" ]] && [[ "$(readlink -f "$LSC_DST" || true)" == "$(readlink -f "$LSC_SRC")" ]]; then
+    pass "Linux-Security-Check discoverable via ~/.config/opencode/skills symlink"
+  else
+    failmsg "Linux-Security-Check not correctly symlinked into ~/.config/opencode/skills"
+  fi
+  if have_cmd python3; then
+    if python3 - "$LSC_SRC" <<'PY' >/dev/null 2>&1
+import pathlib
+import sys
+for path in sorted(pathlib.Path(sys.argv[1]).glob("scripts/*.py")):
+    compile(path.read_text(encoding="utf-8"), str(path), "exec")
+PY
+    then
+      pass "Linux-Security-Check scripts compile"
+    else
+      failmsg "Linux-Security-Check scripts have a syntax error"
+    fi
+  else
+    warnmsg "python3 not available; skipped Linux-Security-Check script syntax check"
+  fi
+else
+  failmsg "Linux-Security-Check skill missing from repository"
+fi
+
 # Key skills present
-for s in ponytail ponytail-review ponytail-audit ponytail-debt ponytail-gain ponytail-help graphify spec-driven-development; do
+for s in ponytail ponytail-review ponytail-audit ponytail-debt ponytail-gain ponytail-help graphify spec-driven-development linux-security-check; do
   [[ -f "$LIVE_OC/skills/$s/SKILL.md" ]] && pass "skill discoverable: $s" || failmsg "skill missing: $s"
 done
 

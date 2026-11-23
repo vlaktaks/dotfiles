@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy.evil-fixture",
+  "name": "Broken fixture plugin",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Missing.qml"
+  }
+}

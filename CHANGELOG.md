@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Added **Linux-Security-Check**, a read-only OpenCode skill for full Linux audits, malware/suspicious-file analysis, Omarchy plugin review, software supply-chain and installer checks, Arch/Omarchy update-risk assessment, and microphone/camera privacy investigations. Includes modular references, bounded stdlib-only helper scripts, a consistent severity report format, and harmless static fixtures/tests.
+- Added installer validation for the security skill (`install/linux-security-check.sh`), verification coverage in `install/verify.sh`, and isolated-HOME installer regression tests.
 - Integrated **ble.sh** (Bash Line Editor, 0.4 devel) for interactive Bash syntax highlighting in `.bashrc` (TTY-only, graceful fallback when not installed; `--attach=none`/`ble-attach` ordering preserved alongside existing Omarchy/Starship/prompt-hook initialization).
 - Added dotfiles-managed ble.sh configuration at `.config/blesh/init.sh` with restrained, theme-matched `ble-face` highlighting mapped to the active Rundfunk/Kitty palette (truecolor).
 - Documented ble.sh installation options (AUR `blesh-git` or user-level `~/.local/share/blesh`), config linking, and integration notes in `README.md`.

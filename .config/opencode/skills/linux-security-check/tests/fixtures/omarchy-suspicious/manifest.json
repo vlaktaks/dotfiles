@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "acme.clock-fixture",
+  "name": "Clock fixture",
+  "version": "1.0.0",
+  "author": "Acme Fixture",
+  "description": "Harmless fixture plugin with a valid manifest.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  }
+}

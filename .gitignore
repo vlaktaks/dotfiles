@@ -22,3 +22,6 @@ src/
 *credentials*
 .opencode/service.json
 .config/opencode/service.json
+
+__pycache__/
+*.pyc

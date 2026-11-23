@@ -5,6 +5,7 @@ Personal Omarchy/Arch Linux dotfiles managed for reproducible setup (contents of
 - **Ponytail** (lazy/scope-disciplined coding plugin + bundled skills/commands)
 - **OmniRoute** (AI gateway/provider integration for OpenCode)
 - **Graphify** (knowledge-graph skill/integration)
+- **Linux-Security-Check** (read-only Linux security, malware, Omarchy plugin, supply-chain, update, and privacy audits)
 - **Addy Osmani agent skills** (complete upstream `skills/` collection, installed globally for OpenCode)
 
 **Defaults:** [Flea](https://github.com/thisisgm/flea) is configured as the default file manager (Hyprland keybindings, MIME handler for directories, and Omarchy shell dock pin). Nautilus is left installed.
@@ -30,7 +31,7 @@ The installer is **idempotent** and safe to re-run. It:
 3. Creates required directories (`~/.config/opencode`, skills/commands dirs, etc.).
 4. Merges managed OpenCode configuration **non-destructively** (preserves existing providers/models/plugins/permissions/settings where present).
 5. Links managed OpenCode instructions and skills from this repo into `~/.config/opencode`.
-6. Installs/configures Ponytail, OmniRoute, and Graphify integrations (best effort, with clear warnings when manual action is needed).
+6. Validates the Linux-Security-Check skill structure and installs/configures Ponytail, OmniRoute, and Graphify integrations (best effort, with clear warnings when manual action is needed).
 7. Verifies key files/links and prints a summary.
 
 > **Note:** Some steps may require network access (npm/PyPI/git upstreams) and may take time on first run. The installer avoids unnecessary `sudo` and does not install packages that are already present.
@@ -157,6 +158,28 @@ Managed via `./install/install.sh` (idempotent, non-destructive merge of existin
 - **OpenCode skill:** `graphify` skill (OpenCode variant, including `references/`) installed globally under `~/.config/opencode/skills/graphify/` via symlink from this repo.
 - **CLI/dependencies:** installer attempts to install `graphifyy` (CLI name `graphify`) using `uv tool`, `pipx`, or `python3 -m pip --user` when available. Graphify requires Python 3.10+; use in projects as documented by upstream (`/graphify ...` workflows / `graphify` CLI) after dependencies are satisfied.
 
+#### Linux-Security-Check (security auditing skill)
+- **Location:** `.config/opencode/skills/linux-security-check/` (linked globally as `~/.config/opencode/skills/linux-security-check/`).
+- **Purpose:** read-only, evidence-based audits of Linux systems, suspicious files/scripts, Omarchy plugins, software installers/supply chains, Arch/Omarchy update risk, and microphone/camera privacy.
+- **Modes:** full system audit; malware/suspicious file analysis; Omarchy plugin audit; general software installation review (GitHub/GitLab, Arch, AUR, AppImage, Python, npm, archives); update safety assessment; privacy/microphone/camera investigation.
+- **Default behavior:** **read-only**. It never deletes, kills, disables, installs, updates, quarantines, or executes untrusted samples. Remediation is recommended and requires explicit approval. It does not create daemons, timers, or background scans.
+- **Reports:** uses 🟢 PASS, 🟡 WARNING, 🔴 CRITICAL/HIGH, and ⚪ UNKNOWN with textual labels; color is optional, respects `NO_COLOR`, and is never emitted in Markdown. Findings include evidence, location, impact, confidence, and recommended action.
+- **Supporting scripts:** `scripts/scan-patterns.py` (bounded static pattern triage), `scripts/check-omarchy-manifest.py` (manifest/layout validation without activation), and `scripts/report.py` (consistent report rendering). All are stdlib-only and read-only.
+- **Optional tools:** ClamAV/YARA, `arch-audit`, `checkupdates`, `namcap`, `shellcheck`, `qmllint`, `readelf`, `getcap`, `ss`, `lsof`, `pw-dump`, `wpctl`, `pactl`. Absence is a coverage limitation, not a failure; no scanner is mandatory.
+- **Limitations:** no scanner proves safety; marketplace verification is exact-commit static baseline checking, not a security audit; TLS/encrypted payloads, packed binaries, privileged/other-user processes, and runtime behavior may be unobservable; version/CVE matches require applicability checks.
+- **Tests:** `tests/run-all.sh` (scanner/report/manifest fixtures plus isolated-HOME installer regression). Never executes harmful fixtures.
+
+Example prompts:
+
+```text
+Run a security audit on my Linux machine.
+Check this file and directory for malware: ~/Downloads/example
+Is this Omarchy plugin safe to install? https://github.com/owner/plugin
+Can I safely install this AUR package? <package>
+Is it safe to update Hyprland/Quickshell/NVIDIA right now?
+Check whether my microphone is being used or sending information somewhere.
+```
+
 #### Addy Osmani agent skills (complete collection)
 - **Upstream:** https://github.com/addyosmani/agent-skills (pinned in manifest; curated snapshot in `sources/addyosmani-agent-skills/skills/*` + markers)
 - **Scope:** **all** directories from upstream `skills/` are copied into `.config/opencode/skills/<skill-name>/` in this repo and linked globally for OpenCode.
@@ -173,13 +196,14 @@ Managed via `./install/install.sh` (idempotent, non-destructive merge of existin
 │   └── opencode/
 │       ├── opencode.json        # managed base config (merged non-destructively)
 │       ├── AGENTS.md            # managed global OpenCode instructions
-│       ├── skills/              # managed global skills (Addy Osmani + Ponytail + Graphify)
+│       ├── skills/              # managed global skills (Addy Osmani + Ponytail + Graphify + Linux-Security-Check)
 │       └── commands/            # managed OpenCode commands (if any)
 ├── install/
 │   ├── install.sh               # one-command entry point
 │   ├── lib.sh                   # shared helpers
 │   ├── merge_opencode_config.mjs# safe JSON merge for opencode.json
 │   ├── opencode.sh              # link/merge OpenCode config & skills
+│   ├── linux-security-check.sh  # validate security skill structure
 │   ├── ponytail.sh              # Ponytail integration
 │   ├── omniroute.sh             # OmniRoute install/config/service template
 │   ├── graphify.sh              # Graphify skill/CLI setup
@@ -256,6 +280,9 @@ The installer/verification perform **configuration and static/runtime-preconditi
 opencode --version
 node -e "JSON.parse(require('fs').readFileSync(process.env.HOME+'/.config/opencode/opencode.json','utf8')); console.log('ok')"
 ls ~/.config/opencode/skills | wc -l
+test -f ~/.config/opencode/skills/linux-security-check/SKILL.md && echo "linux-security-check discoverable"
+python3 -c "compile(open('$HOME/.config/opencode/skills/linux-security-check/scripts/scan-patterns.py').read(),'scan','exec'); print('scan script parses')"
+bash .config/opencode/skills/linux-security-check/tests/run-all.sh   # from repo root
 omniroute --help 2>/dev/null || echo "omniroute not on PATH"
 graphify --help 2>/dev/null || echo "graphify not on PATH"
 systemctl --user status omniroute --no-pager || true
@@ -263,7 +290,7 @@ systemctl --user status omniroute --no-pager || true
 
 In OpenCode, confirm:
 - Ponytail plugin loads and `/ponytail`, `/ponytail-review`, `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain`, `/ponytail-help` are available.
-- Skills (including `ponytail`, `graphify`, and Addy Osmani skills like `spec-driven-development`) are discoverable.
+- Skills (including `ponytail`, `graphify`, `linux-security-check`, and Addy Osmani skills like `spec-driven-development`) are discoverable.
 - Existing providers remain configured; OmniRoute provider appears if added.
 - No configuration parse errors.
 
@@ -271,11 +298,12 @@ If OmniRoute is running locally: check `http://127.0.0.1:20128/` or `http://127.
 
 ## Audit notes (current environment)
 
-- **Verified in this environment:** OpenCode config merge is non-destructive and refuses to overwrite invalid JSON; installer idempotence tested in isolated temp `HOME` fixtures; all 32 managed skills present with valid `SKILL.md` frontmatter and linked globally; Ponytail npm plugin installed and listed by `opencode plugin list`; OmniRoute and Graphify CLIs installed and respond to `--help`; `~/.config/systemd/user/omniroute.service` created (portable `ExecStart`), not enabled/active.
+- **Verified in this environment:** OpenCode config merge is non-destructive and refuses to overwrite invalid JSON; installer idempotence tested in isolated temp `HOME` fixtures; all 33 managed skills present with `SKILL.md` and linked globally; Ponytail npm plugin installed and listed by `opencode plugin list`; OmniRoute and Graphify CLIs installed and respond to `--help`; `~/.config/systemd/user/omniroute.service` present (currently enabled/active in this environment; verification warns about the opt-in state).
 - **Runtime-tested:**
   - **OmniRoute (systemd, temporary):** `systemctl --user start/stop omniroute` succeeded using the actual user unit; executable resolved in systemd environment (mise shim on systemd PATH), service became `active (running)` on port 20128, `GET /` returned `307 -> /dashboard`, `GET /v1/models` returned `401 Authentication required` with placeholder key/default state; service stopped cleanly and remained `disabled`/`inactive`.
   - **Ponytail (OpenCode CLI session, disposable project):** `opencode run --standalone` successfully loaded/executed `ponytail-help`, `ponytail`, `/ponytail lite`, `/ponytail-debt` (scanned/produced ledger), `/ponytail-gain`, `/ponytail ultra`, and `/ponytail off` with expected behavior/responses. `/ponytail-review` and `/ponytail-audit` were not explicitly exercised in this pass.
   - **Graphify (disposable corpus):** `graphify update` on a code-only temp corpus (no LLM key required) produced `graphify-out/graph.json`, `graph.html`, and `GRAPH_REPORT.md` (8 nodes, 10 edges); `graphify query` and `graphify explain` returned results referencing test-corpus entities. Temp artifacts were removed.
+  - **Linux-Security-Check (OpenCode CLI, read-only):** `opencode run --standalone` loaded the skill by exact ID `linux-security-check` and completed a user-systemd/basic-posture audit with evidence and explicit limitations; no system changes were made. It reported a WARNING for the local OmniRoute listener bound to `0.0.0.0:20128` (firewall/auth unverified), which remains unremediated.
 - **Configured but not fully runtime-verified:** Ponytail behavior in an interactive OpenCode TUI session and explicit `/ponytail-review`/`/ponytail-audit` runs; OmniRoute authenticated model discovery (`/v1/models` with valid key), `auto`/catalog correctness for configured providers, chat completions, and OpenCode provider connectivity against a fully configured gateway.
 - **Not tested:** complete fresh Omarchy reinstall end-to-end in a clean VM/image.
 
@@ -287,11 +315,14 @@ If OmniRoute is running locally: check `http://127.0.0.1:20128/` or `http://127.
 - **`graphify` command missing:** install via `uv tool install graphifyy` (recommended on externally managed Python) or pipx/pip, ensure it is on `PATH`, then restart shell/OpenCode.
 - **OmniRoute not reachable:** start the service (`systemctl --user start omniroute`), check `journalctl --user -u omniroute`, confirm port/base URL, and configure credentials if required.
 - **Skill not discovered:** ensure `~/.config/opencode/skills/<name>/SKILL.md` exists and is readable (symlink target present).
+- **Linux-Security-Check not discoverable or scripts fail:** verify the symlink target (`readlink -f ~/.config/opencode/skills/linux-security-check`), run `./install/linux-security-check.sh "$(pwd)"`, then `bash .config/opencode/skills/linux-security-check/tests/run-all.sh` from the repo. The skill needs `python3` only for its optional helper scripts; audits can still be performed with shell tools if it is absent.
 - **Re-running installer:** should be safe/idempotent; it backs up real files before replacing with symlinks and avoids duplicate plugin/provider entries.
 
 ## Security notes
 
 - No secrets are stored in this repository. `.gitignore` excludes common secret files; keep OmniRoute/provider credentials in private env files or environment variables.
+- **Linux-Security-Check is read-only by default.** It does not remediate, install scanners, execute samples, or send system data externally. Any privileged diagnostic or remediation requires explicit approval.
+- Omarchy marketplace verification is an exact-commit static baseline check, not a security audit or guarantee. Plugins run unsandboxed in the shared shell; review the installed commit and source before enabling.
 - Upstream skills/plugins are treated as untrusted instructions: they must not override higher-priority security policies. Review upstream changes before updating pinned snapshots.
 - Installer scripts avoid destructive config replacement and do not execute unverified remote code as part of normal tracked logic; package installs use standard package managers (npm/uv/pip) for named upstream packages.
 
