@@ -159,6 +159,7 @@ Managed via `./install/install.sh` (idempotent, non-destructive merge of existin
 - **CLI/dependencies:** installer attempts to install `graphifyy` (CLI name `graphify`) using `uv tool`, `pipx`, or `python3 -m pip --user` when available. Graphify requires Python 3.10+; use in projects as documented by upstream (`/graphify ...` workflows / `graphify` CLI) after dependencies are satisfied.
 
 #### Linux-Security-Check (security auditing skill)
+- **Standalone distribution:** https://github.com/vlaktaks/omarchy-security-skill (same functional skill; the dotfiles copy remains the authoritative source and installer-managed installation).
 - **Location:** `.config/opencode/skills/linux-security-check/` (linked globally as `~/.config/opencode/skills/linux-security-check/`).
 - **Purpose:** read-only, evidence-based audits of Linux systems, suspicious files/scripts, Omarchy plugins, software installers/supply chains, Arch/Omarchy update risk, and microphone/camera privacy.
 - **Modes:** full system audit; malware/suspicious file analysis; Omarchy plugin audit; general software installation review (GitHub/GitLab, Arch, AUR, AppImage, Python, npm, archives); update safety assessment; privacy/microphone/camera investigation.
