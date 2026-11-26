@@ -19,6 +19,7 @@ run_step "Ponytail" "$SCRIPT_DIR/ponytail.sh" "$REPO_ROOT"
 run_step "OmniRoute" "$SCRIPT_DIR/omniroute.sh" "$REPO_ROOT"
 run_step "Graphify" "$SCRIPT_DIR/graphify.sh" "$REPO_ROOT"
 run_step "Addy Osmani agent skills" "$SCRIPT_DIR/agent-skills.sh" "$REPO_ROOT"
+run_step "Ollama" "$SCRIPT_DIR/ollama.sh" "$REPO_ROOT"
 
 run_step "Verification" "$SCRIPT_DIR/verify.sh" "$REPO_ROOT" || true
 

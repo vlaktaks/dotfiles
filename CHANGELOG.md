@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Added **Ollama** integration: a non-destructive installer step (`install/ollama.sh`) that verifies a single maintainable Ollama installation (official installer, manual tarball, or pacman — never a second method), ensures the systemd unit and the `OLLAMA_CONTEXT_LENGTH=32768` drop-in, enables the service when possible, and idempotently creates the `inkling-2-mini:16k` Modelfile tag (16384-token context, GPU enabled) from a locally pulled base model without ever downloading model weights.
+- Added Ollama verification coverage in `install/verify.sh` (client/server version match, localhost-only listener, systemd unit and enable state, context drop-in, model tag presence and `num_ctx`), and pinned Ollama v0.40.18 in `sources/manifests/upstream.json`.
 - Added **Linux-Security-Check**, a read-only OpenCode skill for full Linux audits, malware/suspicious-file analysis, Omarchy plugin review, software supply-chain and installer checks, Arch/Omarchy update-risk assessment, and microphone/camera privacy investigations. Includes modular references, bounded stdlib-only helper scripts, a consistent severity report format, and harmless static fixtures/tests.
 - Added installer validation for the security skill (`install/linux-security-check.sh`), verification coverage in `install/verify.sh`, and isolated-HOME installer regression tests.
 - Integrated **ble.sh** (Bash Line Editor, 0.4 devel) for interactive Bash syntax highlighting in `.bashrc` (TTY-only, graceful fallback when not installed; `--attach=none`/`ble-attach` ordering preserved alongside existing Omarchy/Starship/prompt-hook initialization).

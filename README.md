@@ -4,6 +4,7 @@ Personal Omarchy/Arch Linux dotfiles managed for reproducible setup (contents of
 
 - **Ponytail** (lazy/scope-disciplined coding plugin + bundled skills/commands)
 - **OmniRoute** (AI gateway/provider integration for OpenCode)
+- **Ollama** (local model server: NVIDIA CUDA, localhost-only API, systemd startup, model-specific context tags)
 - **Graphify** (knowledge-graph skill/integration)
 - **Linux-Security-Check** (read-only Linux security, malware, Omarchy plugin, supply-chain, update, and privacy audits)
 - **Addy Osmani agent skills** (complete upstream `skills/` collection, installed globally for OpenCode)
@@ -31,7 +32,7 @@ The installer is **idempotent** and safe to re-run. It:
 3. Creates required directories (`~/.config/opencode`, skills/commands dirs, etc.).
 4. Merges managed OpenCode configuration **non-destructively** (preserves existing providers/models/plugins/permissions/settings where present).
 5. Links managed OpenCode instructions and skills from this repo into `~/.config/opencode`.
-6. Validates the Linux-Security-Check skill structure and installs/configures Ponytail, OmniRoute, and Graphify integrations (best effort, with clear warnings when manual action is needed).
+6. Validates the Linux-Security-Check skill structure and installs/configures Ponytail, OmniRoute, and Graphify integrations, and verifies the Ollama setup (best effort, with clear warnings when manual action is needed).
 7. Verifies key files/links and prints a summary.
 
 > **Note:** Some steps may require network access (npm/PyPI/git upstreams) and may take time on first run. The installer avoids unnecessary `sudo` and does not install packages that are already present.
@@ -153,6 +154,21 @@ Managed via `./install/install.sh` (idempotent, non-destructive merge of existin
   - `systemctl --user status omniroute`
   - logs via `journalctl --user -u omniroute -f`
 
+#### Ollama
+
+- **Upstream:** https://github.com/ollama/ollama (pinned in `sources/manifests/upstream.json`; latest stable at pin time: v0.40.18)
+- **Installation:** the installer verifies a **single** existing installation (official `install.sh`, manual tarball into `/usr/bin`, or the Arch `ollama` package) and never adds a second method or overwrites an existing unit. On a fresh system, install Ollama first with exactly one method (requires sudo), then re-run the dotfiles installer:
+  - official installer (recommended, creates the `ollama` user, unit, and `/usr/share/ollama` model store): `curl -fsSL https://ollama.com/install.sh | sh`
+  - manual tarball: `curl -L https://ollama.com/download/ollama-linux-amd64.tgz | sudo tar -C / -xz`
+  - or `sudo pacman -S ollama` when the packaged version is acceptable
+- **Service:** system unit (`/etc/systemd/system/ollama.service` or the package-shipped unit) plus a drop-in that sets `OLLAMA_CONTEXT_LENGTH=32768` as the global default context. The API stays bound to `127.0.0.1:11434`. The installer enables the service when possible (`systemctl enable ollama`).
+- **CUDA:** NVIDIA acceleration is used automatically when an NVIDIA GPU is present; nothing is forced to CPU or disabled.
+- **Model-specific context (Modelfile tags):** OpenCode sends no `num_ctx`, so Ollama resolves the context from the model's `PARAMETER num_ctx` (Modelfile) or the global default. `inkling-2-mini:16k` pins Inkling 2 Mini to 16384 tokens — a 26B model with a vision projector needs that headroom on a 12 GB GPU (its default/32K does not fit) — while `qwen3.8:27b` keeps the 32768 global default with no tag.
+- **Model downloads are optional and manual** (~18 GB each); the installer never downloads model weights silently:
+  - `ollama pull inkling-2-mini`, then re-run `./install/install.sh` (it creates the `inkling-2-mini:16k` tag automatically) — or manually: `ollama create inkling-2-mini:16k -f -` with a Modelfile containing `FROM inkling-2-mini:latest` and `PARAMETER num_ctx 16384`
+  - `ollama pull qwen3.8:27b`
+- **OpenCode discovery:** OpenCode probes `http://127.0.0.1:11434`, discovers completion-capable models, and lists them as `ollama/*` in `/models`; no provider entry or key is required.
+
 #### Graphify
 - **Upstream:** https://github.com/Graphify-Labs/graphify (pinned in manifest; curated source snapshot in `sources/graphify/` containing OpenCode skill sources + metadata)
 - **OpenCode skill:** `graphify` skill (OpenCode variant, including `references/`) installed globally under `~/.config/opencode/skills/graphify/` via symlink from this repo.
@@ -209,6 +225,7 @@ Check whether my microphone is being used or sending information somewhere.
 │   ├── omniroute.sh             # OmniRoute install/config/service template
 │   ├── graphify.sh              # Graphify skill/CLI setup
 │   ├── agent-skills.sh          # completeness checks for Addy Osmani skills
+│   ├── ollama.sh                # Ollama install verification + context tag setup
 │   ├── verify.sh                # post-install verification
 │   └── omniroute.env.example    # example private env file (no secrets)
 ├── sources/
@@ -305,6 +322,7 @@ If OmniRoute is running locally: check `http://127.0.0.1:20128/` or `http://127.
   - **Ponytail (OpenCode CLI session, disposable project):** `opencode run --standalone` successfully loaded/executed `ponytail-help`, `ponytail`, `/ponytail lite`, `/ponytail-debt` (scanned/produced ledger), `/ponytail-gain`, `/ponytail ultra`, and `/ponytail off` with expected behavior/responses. `/ponytail-review` and `/ponytail-audit` were not explicitly exercised in this pass.
   - **Graphify (disposable corpus):** `graphify update` on a code-only temp corpus (no LLM key required) produced `graphify-out/graph.json`, `graph.html`, and `GRAPH_REPORT.md` (8 nodes, 10 edges); `graphify query` and `graphify explain` returned results referencing test-corpus entities. Temp artifacts were removed.
   - **Linux-Security-Check (OpenCode CLI, read-only):** `opencode run --standalone` loaded the skill by exact ID `linux-security-check` and completed a user-systemd/basic-posture audit with evidence and explicit limitations; no system changes were made. It reported a WARNING for the local OmniRoute listener bound to `0.0.0.0:20128` (firewall/auth unverified), which remains unremediated.
+  - **Ollama (local, NVIDIA RTX 5070 12 GB):** single installation at `/usr/bin/ollama` v0.40.18 (client and server match; latest stable at audit time), systemd unit enabled/active, API on `127.0.0.1:11434`, `OLLAMA_CONTEXT_LENGTH=32768` drop-in; CUDA v13 backend loads; `inkling-2-mini:16k` (num_ctx 16384) and `qwen3.8:27b` (32768) inference verified with correct outputs and GPU offload (~9.4 GB / ~7.9 GB VRAM); OpenCode runs `ollama/inkling-2-mini:16k` end-to-end including the WebFetch tool; a captured request confirmed OpenCode sends no `num_ctx`, so the Modelfile `PARAMETER num_ctx` takes effect.
 - **Configured but not fully runtime-verified:** Ponytail behavior in an interactive OpenCode TUI session and explicit `/ponytail-review`/`/ponytail-audit` runs; OmniRoute authenticated model discovery (`/v1/models` with valid key), `auto`/catalog correctness for configured providers, chat completions, and OpenCode provider connectivity against a fully configured gateway.
 - **Not tested:** complete fresh Omarchy reinstall end-to-end in a clean VM/image.
 
@@ -315,6 +333,8 @@ If OmniRoute is running locally: check `http://127.0.0.1:20128/` or `http://127.
 - **Plugin/commands not visible:** restart OpenCode, ensure `plugins` includes `@dietrichgebert/ponytail` in `~/.config/opencode/opencode.json`, and verify the package is installed/resolvable.
 - **`graphify` command missing:** install via `uv tool install graphifyy` (recommended on externally managed Python) or pipx/pip, ensure it is on `PATH`, then restart shell/OpenCode.
 - **OmniRoute not reachable:** start the service (`systemctl --user start omniroute`), check `journalctl --user -u omniroute`, confirm port/base URL, and configure credentials if required.
+- **Ollama CUDA out-of-memory (`llama-server startup failed after projector CPU offload retry: CUDA error: out of memory`):** a vision model with too large a context does not fit in GPU memory. Use the `inkling-2-mini:16k` tag in OpenCode (or pass `num_ctx` explicitly in direct API requests) and do not load two large models at once; the global `OLLAMA_CONTEXT_LENGTH` must stay at 32768 for `qwen3.8:27b`.
+- **Ollama tag missing / model not pulled:** run `ollama pull <model>` first (large download, optional), then re-run `./install/install.sh`; the installer creates the `inkling-2-mini:16k` tag from the pulled base model. Verify with `ollama list` and `curl -fsS http://localhost:11434/api/show -d '{"model":"inkling-2-mini:16k"}'`.
 - **Skill not discovered:** ensure `~/.config/opencode/skills/<name>/SKILL.md` exists and is readable (symlink target present).
 - **Linux-Security-Check not discoverable or scripts fail:** verify the symlink target (`readlink -f ~/.config/opencode/skills/linux-security-check`), run `./install/linux-security-check.sh "$(pwd)"`, then `bash .config/opencode/skills/linux-security-check/tests/run-all.sh` from the repo. The skill needs `python3` only for its optional helper scripts; audits can still be performed with shell tools if it is absent.
 - **Re-running installer:** should be safe/idempotent; it backs up real files before replacing with symlinks and avoids duplicate plugin/provider entries.
@@ -333,5 +353,6 @@ If OmniRoute is running locally: check `http://127.0.0.1:20128/` or `http://127.
 2. `git clone https://github.com/vlaktaks/dotfiles.git ~/.dotfiles`
 3. `cd ~/.dotfiles && ./install/install.sh`
 4. Recreate private credentials/env files (never stored in git), then start/enable OmniRoute if desired.
+5. Optional local models (large downloads): install Ollama with one method (see the Ollama section), then `ollama pull inkling-2-mini` and/or `ollama pull qwen3.8:27b`, and re-run `./install/install.sh` to create the `inkling-2-mini:16k` context tag.
 
 This restores the managed OpenCode setup, skills, and integrations without manually copying files or guessing destinations.

@@ -167,6 +167,54 @@ if have_cmd curl; then
   fi
 fi
 
+# Ollama
+have_cmd ollama && pass "ollama CLI available ($(ollama --version 2>/dev/null | awk '{print $NF}'))" || warnmsg "ollama CLI not installed/on PATH"
+if have_cmd ollama && have_cmd curl; then
+  cli_v="$(ollama --version 2>/dev/null | awk '{print $NF}')"
+  srv="$(curl -fsS http://127.0.0.1:11434/api/version 2>/dev/null || true)"
+  if [[ -n "$srv" ]]; then
+    srv_v="$(printf '%s' "$srv" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+    [[ -n "$srv_v" && "$srv_v" == "$cli_v" ]] \
+      && pass "ollama client/server versions match ($cli_v)" \
+      || warnmsg "ollama client/server version mismatch: client=$cli_v server=${srv_v:-unknown}"
+  else
+    warnmsg "ollama server not reachable on localhost:11434 (service may not be running)"
+  fi
+fi
+if have_cmd ss && ss -tln 2>/dev/null | grep -q '127.0.0.1:11434'; then
+  pass "ollama API bound to 127.0.0.1:11434 (localhost only)"
+else
+  warnmsg "ollama listener on 127.0.0.1:11434 not found"
+fi
+if [[ -f /etc/systemd/system/ollama.service ]] || [[ -f /usr/lib/systemd/system/ollama.service ]]; then
+  pass "ollama systemd unit present"
+  if have_cmd systemctl && systemctl is-enabled ollama >/dev/null 2>&1; then
+    pass "ollama.service enabled"
+  else
+    warnmsg "ollama.service not enabled"
+  fi
+else
+  warnmsg "no ollama systemd unit found"
+fi
+if [[ -f /etc/systemd/system/ollama.service.d/override.conf ]] && grep -q 'OLLAMA_CONTEXT_LENGTH=32768' /etc/systemd/system/ollama.service.d/override.conf 2>/dev/null; then
+  pass "drop-in sets OLLAMA_CONTEXT_LENGTH=32768"
+else
+  warnmsg "drop-in OLLAMA_CONTEXT_LENGTH=32768 not found"
+fi
+if have_cmd curl && curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  tags="$(curl -fsS http://127.0.0.1:11434/api/tags 2>/dev/null)"
+  printf '%s' "$tags" | grep -q '"inkling-2-mini:16k"' && pass "tag inkling-2-mini:16k present" || warnmsg "tag inkling-2-mini:16k missing"
+  show16="$(curl -fsS http://127.0.0.1:11434/api/show -d '{"model":"inkling-2-mini:16k"}' 2>/dev/null || true)"
+  if printf '%s' "$show16" | grep -q 'num_ctx[[:space:]]*16384'; then
+    pass "inkling-2-mini:16k num_ctx=16384"
+  else
+    warnmsg "inkling-2-mini:16k num_ctx not 16384 (show: ${show16:0:120})"
+  fi
+  printf '%s' "$tags" | grep -q '"qwen3.8:27b"' && pass "model qwen3.8:27b present" || warnmsg "model qwen3.8:27b not pulled (optional)"
+else
+  warnmsg "ollama model tags not verifiable (server unreachable)"
+fi
+
 # Secret hygiene (paths only, no content)
 [[ -f "$LIVE_OC/service.json" ]] && pass "local OpenCode service.json present (untracked/local secret-bearing file expected)" || true
 [[ -f "$HOME/.config/omniroute/omniroute.env" ]] && warnmsg "private OmniRoute env file exists (ensure chmod 600, never commit)" || pass "no ~/.config/omniroute/omniroute.env found (credentials not configured yet, expected)"
