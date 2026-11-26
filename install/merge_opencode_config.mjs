@@ -82,6 +82,29 @@ if (managed.provider && typeof managed.provider === 'object' && !Array.isArray(m
   }
 }
 
+// MCP: union servers by name without overwriting existing entries; apply managed timeout defaults only if missing
+if (managed.mcp && typeof managed.mcp === 'object' && !Array.isArray(managed.mcp)) {
+  out.mcp = (out.mcp && typeof out.mcp === 'object' && !Array.isArray(out.mcp)) ? { ...out.mcp } : {};
+  const servers = (out.mcp.servers && typeof out.mcp.servers === 'object' && !Array.isArray(out.mcp.servers))
+    ? { ...out.mcp.servers }
+    : {};
+  if (managed.mcp.servers && typeof managed.mcp.servers === 'object' && !Array.isArray(managed.mcp.servers)) {
+    for (const [name, cfg] of Object.entries(managed.mcp.servers)) {
+      if (!Object.prototype.hasOwnProperty.call(servers, name)) servers[name] = cfg;
+    }
+  }
+  out.mcp = { ...out.mcp, servers };
+  if (managed.mcp.timeout && !out.mcp.timeout) out.mcp.timeout = managed.mcp.timeout;
+}
+
+// Permissions: append managed rules not already present (identical action/resource/effect)
+if (Array.isArray(managed.permissions) && managed.permissions.length) {
+  const existing = Array.isArray(out.permissions) ? out.permissions : [];
+  const keys = new Set(existing.map(r => `${r?.action}|${r?.resource}|${r?.effect}`));
+  const added = managed.permissions.filter(r => r && typeof r === 'object' && !keys.has(`${r.action}|${r.resource}|${r.effect}`));
+  if (added.length) out.permissions = [...existing, ...added];
+}
+
 fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 fs.writeFileSync(targetPath, JSON.stringify(out, null, 2) + '\n');
 console.log('merged');
