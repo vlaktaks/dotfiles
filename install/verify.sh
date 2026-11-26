@@ -215,7 +215,7 @@ else
   warnmsg "ollama model tags not verifiable (server unreachable)"
 fi
 
-# Email MCP (Outlook + Proton Mail)
+# Email MCP (Outlook)
 EMCP="$HOME/.local/bin/email-mcp"
 if [[ -x "$EMCP" ]]; then
   pass "email-mcp binary present at $EMCP"
@@ -230,7 +230,7 @@ fi
 if [[ -d "$HOME/.config/opencode/secrets" ]]; then
   perms="$(stat -c '%a' "$HOME/.config/opencode/secrets" 2>/dev/null || echo '?')"
   [[ "$perms" == "700" ]] && pass "secrets dir is 0700" || failmsg "secrets dir perms are $perms (expected 700)"
-  for f in outlook-tokens.json outlook-config.json proton-credentials.json; do
+  for f in outlook-tokens.json outlook-config.json; do
     if [[ -f "$HOME/.config/opencode/secrets/$f" ]]; then
       fperms="$(stat -c '%a' "$HOME/.config/opencode/secrets/$f" 2>/dev/null || echo '?')"
       [[ "$fperms" == "600" ]] && pass "$f is 0600" || failmsg "$f perms are $fperms (expected 600)"
@@ -250,24 +250,13 @@ const allow = perms.filter(r => r.action && r.action.startsWith('email_mcp_') &&
 console.log(JSON.stringify({ present: !!srv, disabled: !!(srv && srv.disabled), ask, allow }));
 NODE
   out="$(cat /tmp/dotfiles-verify-email.txt 2>/dev/null || echo '{}')"
-  if node -e "const d=JSON.parse(process.argv[1]); if(!d.present)process.exit(1); if(!d.disabled)process.exit(2); if(d.ask.length!==5)process.exit(3); if(d.allow.length<7)process.exit(4);" "$out"; then
-    pass "email-mcp configured in opencode.json: present, disabled by default, 5 ask-gated write tools, read tools allowed"
+  if node -e "const d=JSON.parse(process.argv[1]); if(!d.present)process.exit(1); if(!d.disabled)process.exit(2); if(d.ask.length!==5)process.exit(3); if(d.allow.length<6)process.exit(4); if(d.ask.includes('email_mcp_email_shutdown')||d.allow.includes('email_mcp_email_shutdown'))process.exit(5);" "$out"; then
+    pass "email-mcp configured in opencode.json: present, disabled by default, 5 ask-gated write tools, read tools allowed, no stale shutdown rule"
   else
     failmsg "email-mcp opencode.json entry incomplete: $out"
   fi
 else
   warnmsg "cannot verify email-mcp opencode.json entry (node or config missing)"
-fi
-if have_cmd pacman && pacman -Q protonmail-bridge >/dev/null 2>&1; then
-  pass "protonmail-bridge installed from official repo ($(pacman -Q protonmail-bridge | awk '{print $2}'))"
-else
-  warnmsg "protonmail-bridge not installed (run: sudo pacman -S protonmail-bridge)"
-fi
-if have_cmd systemctl && [[ -f /usr/lib/systemd/user/protonmail-bridge.service ]]; then
-  en="$(systemctl --user is-enabled protonmail-bridge 2>/dev/null || true)"
-  ac="$(systemctl --user is-active protonmail-bridge 2>/dev/null || true)"
-  [[ "$en" == "enabled" ]] && warnmsg "protonmail-bridge user service is enabled (expected: not enabled)" || pass "protonmail-bridge user service not enabled ($en)"
-  [[ "$ac" == "active" ]] && warnmsg "protonmail-bridge user service is running" || pass "protonmail-bridge user service not running ($ac)"
 fi
 
 # Secret hygiene (paths only, no content)
@@ -276,7 +265,7 @@ fi
 
 # Repo hygiene: no secret-bearing files may be tracked in the dotfiles repository
 if have_cmd git && [[ -d "$REPO_ROOT/.git" ]]; then
-  if tracked_secrets="$(git -C "$REPO_ROOT" ls-files | grep -Ei '(^|/)(secrets?/|\.env|\.env\.|outlook-tokens|outlook-config|proton-credentials|.*\.key$|.*\.pem$)' || true)"; then
+  if tracked_secrets="$(git -C "$REPO_ROOT" ls-files | grep -Ei '(^|/)(secrets?/|\.env|\.env\.|outlook-tokens|outlook-config|.*\.key$|.*\.pem$)' || true)"; then
     if [[ -n "$tracked_secrets" ]]; then
       failmsg "repo tracks secret-bearing paths: $tracked_secrets"
     else

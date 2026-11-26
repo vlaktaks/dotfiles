@@ -23,11 +23,9 @@ src/
 .opencode/service.json
 .config/opencode/service.json
 .config/opencode/secrets/
-# Outlook/Proton email integration (MCP): never commit tokens, bridge passwords,
-# bridge TLS certs, mailbox contents, or debug logs
+# Outlook email integration (MCP): never commit OAuth tokens or debug logs
 outlook-tokens.json
 outlook-config.json
-proton-credentials.json
 email-mcp.log
 .email-mcp/
 

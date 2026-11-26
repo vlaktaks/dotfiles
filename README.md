@@ -8,7 +8,7 @@ Personal Omarchy/Arch Linux dotfiles managed for reproducible setup (contents of
 - **Graphify** (knowledge-graph skill/integration)
 - **Linux-Security-Check** (read-only Linux security, malware, Omarchy plugin, supply-chain, update, and privacy audits)
 - **Addy Osmani agent skills** (complete upstream `skills/` collection, installed globally for OpenCode)
-- **Email MCP** (on-demand Outlook via Microsoft Graph device-code OAuth + Proton Mail via the official Bridge IMAP/SMTP, hard confirmation gates, disabled by default)
+- **Email MCP** (on-demand Outlook via Microsoft Graph device-code OAuth, hard confirmation gates, disabled by default)
 
 **Defaults:** [Flea](https://github.com/thisisgm/flea) is configured as the default file manager (Hyprland keybindings, MIME handler for directories, and Omarchy shell dock pin). Nautilus is left installed.
 
@@ -34,7 +34,7 @@ The installer is **idempotent** and safe to re-run. It:
 4. Merges managed OpenCode configuration **non-destructively** (preserves existing providers/models/plugins/permissions/settings where present).
 5. Links managed OpenCode instructions and skills from this repo into `~/.config/opencode`.
 6. Validates the Linux-Security-Check skill structure and installs/configures Ponytail, OmniRoute, and Graphify integrations, and verifies the Ollama setup (best effort, with clear warnings when manual action is needed).
-7. Installs the **Email MCP** server (`~/.local/bin/email-mcp`), creates the private secrets dir (`~/.config/opencode/secrets`, 0700), merges the disabled-by-default `email-mcp` MCP server and its read-allow/write-ask permission rules into `opencode.json`, and checks the Proton Mail Bridge package state (never starts or enables it).
+7. Installs the **Email MCP** server (`~/.local/bin/email-mcp`), creates the private secrets dir (`~/.config/opencode/secrets`, 0700), and merges the disabled-by-default `email-mcp` MCP server and its read-allow/write-ask permission rules into `opencode.json`.
 8. Verifies key files/links and prints a summary.
 
 > **Note:** Some steps may require network access (npm/PyPI/git upstreams) and may take time on first run. The installer avoids unnecessary `sudo` and does not install packages that are already present.
@@ -272,24 +272,23 @@ Skills are available in **all projects** once linked globally.
 
 The installer and repo are designed so secrets remain outside Git (`.gitignore` excludes common secret patterns and OpenCode service/config secret files).
 
-## Email integration (Outlook + Proton Mail, manual-only)
+## Email integration (Outlook, manual-only)
 
-On-demand email access for OpenCode through one small, stdlib-only MCP server (`~/.local/bin/email-mcp`, source in `sources/email-mcp/`). It is **disabled by default**: OpenCode startup never touches email. Connect it via `/mcps` when you want to work with mail.
+On-demand Outlook access for OpenCode through one small, stdlib-only MCP server (`~/.local/bin/email-mcp`, source in `sources/email-mcp/`). It is **disabled by default**: OpenCode startup never touches email. Connect it via `/mcps` when you want to work with mail.
 
-- **Outlook** (personal Outlook.com or Microsoft 365): Microsoft Graph, delegated permissions, device-code login. You never enter your Microsoft password outside Microsoft's own sign-in page. Scopes are incremental: `email-mcp login outlook` requests read access (`Mail.Read`); `email-mcp login outlook --write` adds `Mail.ReadWrite` for drafting/sending/moving.
-- **Proton Mail**: the official Proton Mail Bridge (Arch `extra` package, signature-verified) over loopback IMAP/SMTP with the Bridge-generated password and TLS pinned to the Bridge certificate. The Bridge starts on first use and stops with the `email_shutdown` tool.
+- **Microsoft Graph**, delegated permissions, device-code login. You never enter your Microsoft password outside Microsoft's own sign-in page.
+- Scopes are incremental: `email-mcp login outlook` requests read access (`Mail.Read`); `email-mcp login outlook --write` adds `Mail.ReadWrite Mail.Send` for drafting/sending/moving/deleting.
 
 Hard safety gates are enforced in the server (`send_draft` needs `confirm: true` after you see the full draft; `move_to_folder` needs `confirm: true` with exact ids/counts; `delete_permanently` needs the literal string `PERMANENTLY DELETE`), and OpenCode `ask` permissions make every write tool prompt you with its exact arguments.
 
 Full setup, examples, and troubleshooting: `sources/email-mcp/README.md`. One-time steps after install:
 
 ```bash
-sudo pacman -S protonmail-bridge            # official repo; then add your account in the GUI
-email-mcp login proton                      # stores the Bridge password (0600, no echo)
 email-mcp login outlook                     # device-code login (create a free Azure app registration first, see doc)
+email-mcp login outlook --write             # once, when you want draft/send/move/delete access
 ```
 
-Secrets live in `~/.config/opencode/secrets/` (0700/0600), outside Git. Disconnect any time with `email-mcp revoke outlook|proton` plus the Microsoft consent page / Bridge GUI.
+Secrets live in `~/.config/opencode/secrets/` (0700/0600), outside Git. Disconnect any time with `email-mcp revoke outlook` plus the Microsoft consent page.
 
 ## Updating upstream tools and skills
 
@@ -338,7 +337,7 @@ In OpenCode, confirm:
 
 If OmniRoute is running locally: check `http://127.0.0.1:20128/` or `http://127.0.0.1:20128/v1/models` (depending on deployment/auth) and ensure models are visible in OpenCode as configured.
 
-For email: connect `email-mcp` in `/mcps`, then try "Show my 10 newest emails across both accounts." (read-only). All write operations will prompt for approval; nothing is ever sent or moved without it.
+For email: connect `email-mcp` in `/mcps`, then try "Show my 10 newest emails." (read-only). All write operations will prompt for approval; nothing is ever sent or moved without it.
 
 ## Audit notes (current environment)
 
@@ -349,9 +348,9 @@ For email: connect `email-mcp` in `/mcps`, then try "Show my 10 newest emails ac
   - **Graphify (disposable corpus):** `graphify update` on a code-only temp corpus (no LLM key required) produced `graphify-out/graph.json`, `graph.html`, and `GRAPH_REPORT.md` (8 nodes, 10 edges); `graphify query` and `graphify explain` returned results referencing test-corpus entities. Temp artifacts were removed.
   - **Linux-Security-Check (OpenCode CLI, read-only):** `opencode run --standalone` loaded the skill by exact ID `linux-security-check` and completed a user-systemd/basic-posture audit with evidence and explicit limitations; no system changes were made. It reported a WARNING for the local OmniRoute listener bound to `0.0.0.0:20128` (firewall/auth unverified), which remains unremediated.
   - **Ollama (local, NVIDIA RTX 5070 12 GB):** single installation at `/usr/bin/ollama` v0.40.18 (client and server match; latest stable at audit time), systemd unit enabled/active, API on `127.0.0.1:11434`, `OLLAMA_CONTEXT_LENGTH=32768` drop-in; CUDA v13 backend loads; `inkling-2-mini:16k` (num_ctx 16384) and `qwen3.8:27b` (32768) inference verified with correct outputs and GPU offload (~9.4 GB / ~7.9 GB VRAM); OpenCode runs `ollama/inkling-2-mini:16k` end-to-end including the WebFetch tool; a captured request confirmed OpenCode sends no `num_ctx`, so the Modelfile `PARAMETER num_ctx` takes effect.
-  - **Email MCP (this change):** `email-mcp selfcheck` passes (hard gates for send/move/bulk-cap/permanent-delete, tool schemas, IMAP criteria builders, RFC822 parsing — all offline); a raw MCP stdio handshake verified `initialize`, `tools/list` (13 tools) and gate rejections (`send_draft` without `confirm:true`, `delete_permanently` with a wrong confirmation); the Proton Mail Bridge package from the Arch `extra` repo was downloaded and its signature verified against `archlinux-keyring` (Robin Candau, full trust), its CLI (`bridge --noninteractive`, `--cli`) and shipped systemd unit (not enabled by default) inspected; config merge for `mcp.servers`/`permissions` is non-destructive and idempotent (tested on temp fixtures). Live mailbox tests were **not** performed (see below).
+  - **Email MCP (Outlook):** `email-mcp selfcheck` passes (hard gates for send/move/bulk-cap/permanent-delete, Outlook-only tool schemas, date/address/HTML builders, a mocked Microsoft Graph backend covering list/search/read/thread/draft/reply/send/move/permanent-delete, and OAuth token refresh/expiry logic — all offline); a raw MCP stdio handshake verified `initialize`, `tools/list` (11 tools) and gate rejections (`send_draft` without `confirm:true`, `delete_permanently` with a wrong confirmation); config merge for `mcp.servers`/`permissions` is non-destructive and idempotent (tested on temp fixtures). Live mailbox tests were **not** performed (see below). Proton Mail support was **removed** after evaluation (Bridge requires a paid Proton plan); see the CHANGELOG.
 - **Configured but not fully runtime-verified:** Ponytail behavior in an interactive OpenCode TUI session and explicit `/ponytail-review`/`/ponytail-audit` runs; OmniRoute authenticated model discovery (`/v1/models` with valid key), `auto`/catalog correctness for configured providers, chat completions, and OpenCode provider connectivity against a fully configured gateway.
-- **Email MCP manual/authenticated steps (not yet done):** installing `protonmail-bridge` via pacman (needs sudo), adding the Proton account in the Bridge GUI (paid plan required) and `email-mcp login proton`, creating the Azure app registration and `email-mcp login outlook` (device-code sign-in), and live read/write mailbox tests. Until these run, the integration is configuration-validated only.
+- **Email MCP manual/authenticated steps (not yet done):** live read/write mailbox tests against the signed-in Outlook account (read login completed: `Mail.Read` + identity scopes; write scopes `Mail.ReadWrite Mail.Send` require one opt-in `email-mcp login outlook --write` consent). Until live tests run, the integration is mock/configuration-validated only.
 - **Not tested:** complete fresh Omarchy reinstall end-to-end in a clean VM/image.
 
 ## Troubleshooting
@@ -366,14 +365,14 @@ For email: connect `email-mcp` in `/mcps`, then try "Show my 10 newest emails ac
 - **Skill not discovered:** ensure `~/.config/opencode/skills/<name>/SKILL.md` exists and is readable (symlink target present).
 - **Email tools not visible in OpenCode:** connect the `email-mcp` server in `/mcps` (it is intentionally disabled by default). `email-mcp status` shows account state.
 - **Email write tool prompts denied:** expected behaviour — every draft/send/move/delete requires your approval (and the server's own hard gates). Do not "allow always" unless you want to weaken the gate.
-- **`Bridge IMAP login failed`:** the Bridge has no account yet or the password is wrong; open the Bridge GUI, add the account, re-run `email-mcp login proton`. See `sources/email-mcp/README.md` for the full table.
+- **Outlook writes fail with 403 (`Mail.Send`/`Mail.ReadWrite`):** your login has read scopes only; run `email-mcp login outlook --write` once to add the write scopes via incremental consent. See `sources/email-mcp/README.md` for the full table.
 - **Linux-Security-Check not discoverable or scripts fail:** verify the symlink target (`readlink -f ~/.config/opencode/skills/linux-security-check`), run `./install/linux-security-check.sh "$(pwd)"`, then `bash .config/opencode/skills/linux-security-check/tests/run-all.sh` from the repo. The skill needs `python3` only for its optional helper scripts; audits can still be performed with shell tools if it is absent.
 - **Re-running installer:** should be safe/idempotent; it backs up real files before replacing with symlinks and avoids duplicate plugin/provider entries.
 
 ## Security notes
 
 - No secrets are stored in this repository. `.gitignore` excludes common secret files; keep OmniRoute/provider credentials in private env files or environment variables.
-- **Email:** OAuth tokens, Bridge passwords, and mailbox content never enter the repo; they live in `~/.config/opencode/secrets/` (0700/0600). The email MCP server is disabled by default, starts the Bridge on demand, pins Bridge TLS, never disables TLS verification, never downloads attachments, and enforces approval gates in code plus OpenCode `ask` permissions.
+- **Email:** OAuth tokens and mailbox content never enter the repo; they live in `~/.config/opencode/secrets/` (0700/0600). The email MCP server is disabled by default, never downloads attachments, and enforces approval gates in code plus OpenCode `ask` permissions.
 - **Linux-Security-Check is read-only by default.** It does not remediate, install scanners, execute samples, or send system data externally. Any privileged diagnostic or remediation requires explicit approval.
 - Omarchy marketplace verification is an exact-commit static baseline check, not a security audit or guarantee. Plugins run unsandboxed in the shared shell; review the installed commit and source before enabling.
 - Upstream skills/plugins are treated as untrusted instructions: they must not override higher-priority security policies. Review upstream changes before updating pinned snapshots.
@@ -385,7 +384,7 @@ For email: connect `email-mcp` in `/mcps`, then try "Show my 10 newest emails ac
 2. `git clone https://github.com/vlaktaks/dotfiles.git ~/.dotfiles`
 3. `cd ~/.dotfiles && ./install/install.sh`
 4. Recreate private credentials/env files (never stored in git), then start/enable OmniRoute if desired.
-   - Email: `sudo pacman -S protonmail-bridge`, add your Proton account in the Bridge GUI, then `email-mcp login proton` and `email-mcp login outlook` (Azure app registration + device code, see the email doc).
+   - Email: `email-mcp login outlook` (Azure app registration + device code, see the email doc); add `--write` for draft/send/move/delete scopes.
 5. Optional local models (large downloads): install Ollama with one method (see the Ollama section), then `ollama pull inkling-2-mini` and/or `ollama pull qwen3.8:27b`, and re-run `./install/install.sh` to create the `inkling-2-mini:16k` context tag.
 
 This restores the managed OpenCode setup, skills, and integrations without manually copying files or guessing destinations.

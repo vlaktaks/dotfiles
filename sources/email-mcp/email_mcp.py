@@ -1,60 +1,52 @@
 #!/usr/bin/env python3
-"""email-mcp: on-demand MCP server for Outlook (Microsoft Graph) and Proton Mail (Bridge IMAP/SMTP).
+"""email-mcp: on-demand MCP server for Outlook (Microsoft Graph).
 
 Design goals
-- Python stdlib only (imaplib/smtplib/ssl/urllib/email): no dependency tree to review.
+- Python stdlib only (urllib/email/html): no dependency tree to review.
 - Read tools are always safe. Write tools are gated IN CODE:
     * send_draft requires confirm=true and only ever sends an existing draft
     * move_to_folder requires confirm=true and reports exact counts
     * delete_permanently requires the literal string "PERMANENTLY DELETE"
   On top of that, OpenCode config sets "ask" permissions for every write tool.
 - Secrets live in ~/.config/opencode/secrets/ (dir 0700, files 0600), never in the dotfiles repo.
-- The Proton Mail Bridge is started lazily on the first Proton tool call and stopped by
-  the email_shutdown tool (or when this process exits). Nothing runs at boot or on OpenCode startup.
-- TLS to the Bridge is pinned to the Bridge's own CA certificate; verification is never disabled.
+- Authentication: OAuth 2.0 device-code flow (public client, no client secret).
+  Incremental scopes: read login = offline_access + Mail.Read (+ identity labels);
+  write login (--write) additionally requests Mail.ReadWrite + Mail.Send.
+- Nothing runs at boot or on OpenCode startup; the MCP server is disabled by default
+  and connected manually via /mcps.
 
 CLI (non-MCP) modes:
     email-mcp                 serve MCP over stdio (default)
     email-mcp status          show configuration state (no secrets)
     email-mcp login outlook [--write]   device-code login for Microsoft Graph
-    email-mcp login proton    store Bridge IMAP/SMTP credentials (interactive, no echo)
     email-mcp revoke outlook  delete local tokens + print consent-revocation instructions
-    email-mcp selfcheck       internal sanity tests (gates, builders, parsing); exits non-zero on failure
+    email-mcp selfcheck       internal sanity tests (gates, Graph mocks, token logic); exits non-zero on failure
 """
 
 import base64
-import email.parser
 import email.utils
-import getpass
-import glob
-import imaplib
 import json
 import os
 import re
-import smtplib
-import socket
-import ssl
-import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 SERVER_NAME = "email-mcp"
 
 SECRETS_DIR = os.path.expanduser("~/.config/opencode/secrets")
 OUTLOOK_CFG = os.path.join(SECRETS_DIR, "outlook-config.json")
 OUTLOOK_TOKENS = os.path.join(SECRETS_DIR, "outlook-tokens.json")
-PROTON_CREDS = os.path.join(SECRETS_DIR, "proton-credentials.json")
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 AUTH_HOST = "https://login.microsoftonline.com"
 SCOPES_READ = ["offline_access", "Mail.Read", "openid", "profile", "email"]
-SCOPES_WRITE = SCOPES_READ + ["Mail.ReadWrite"]
+SCOPES_WRITE = SCOPES_READ + ["Mail.ReadWrite", "Mail.Send"]
 
-# Canonical folder -> Outlook well-known name / Proton IMAP name candidates.
+# Canonical folder -> Outlook well-known name.
 WELL_KNOWN = {
     "inbox": "inbox",
     "spam": "junkemail",
@@ -63,22 +55,8 @@ WELL_KNOWN = {
     "archive": "archive",
     "sent": "sentitems",
 }
-PROTON_FOLDERS = {
-    "inbox": ["inbox"],
-    "spam": ["spam", "junk", "junk email"],
-    "trash": ["trash", "deleted items", "deleted"],
-    "drafts": ["drafts"],
-    "archive": ["archive"],
-    "sent": ["sent"],
-}
 VALID_FOLDERS = sorted(WELL_KNOWN)
 MOVE_TARGETS = ["spam", "trash", "archive"]
-
-IMAP_HOST = os.environ.get("EMAIL_IMAP_HOST", "127.0.0.1")
-IMAP_PORT = int(os.environ.get("EMAIL_IMAP_PORT", "1143"))
-SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "1025"))
-BRIDGE_BIN = os.environ.get("EMAIL_BRIDGE_BIN", "protonmail-bridge-core")
-BRIDGE_CERT = os.environ.get("EMAIL_BRIDGE_CERT", "")  # optional override
 
 CONFIRM_SEND = "confirm must be exactly true. Show the final message to the user and obtain explicit approval for THIS send before setting confirm."
 CONFIRM_MOVE = "confirm must be exactly true. Show the user the exact messages (ids and count) before moving them."
@@ -86,8 +64,6 @@ CONFIRM_DELETE = 'delete_permanently requires confirmation = "PERMANENTLY DELETE
 MAX_BULK = 100
 
 GRAPH_MSG_SELECT = "id,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,isRead,bodyPreview,conversationId"
-
-_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 # ---------------------------------------------------------------- utilities
@@ -136,21 +112,6 @@ def parse_iso_date(value):
     return "%s-%s-%s" % m.groups()
 
 
-def imap_date(value):
-    """YYYY-MM-DD -> dd-Mon-yyyy (locale-independent month names)."""
-    y, m, d = value.split("-")
-    return "%02d-%s-%s" % (int(d), _MONTHS[int(m) - 1], y)
-
-
-def addr_list(header_val):
-    """email.utils.getaddresses -> [{"name":..., "address":...}]."""
-    out = []
-    for name, addr in email.utils.getaddresses([header_val or ""]):
-        if addr:
-            out.append({"name": name, "address": addr})
-    return out
-
-
 def b64url_decode(segment):
     return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
 
@@ -197,143 +158,17 @@ def html_to_text(html):
     return collapse_ws("".join(p.parts))
 
 
-def part_payload(part):
-    try:
-        payload = part.get_payload(decode=True)
-        if payload is None:
-            payload = part.get_payload()
-    except Exception:
-        payload = part.get_payload()
-    if isinstance(payload, bytes):
-        charset = part.get_content_charset() or "utf-8"
-        try:
-            return payload.decode(charset, "replace")
-        except LookupError:
-            return payload.decode("utf-8", "replace")
-    return str(payload)
-
-
-def body_to_text(eml):
-    """Best-effort plain text of an EmailMessage (text/plain preferred, HTML fallback)."""
-    text_part = html_part = None
-    for part in eml.walk():
-        if part.is_multipart():
-            continue
-        ctype = part.get_content_type()
-        if ctype == "text/plain" and text_part is None:
-            text_part = part
-        elif ctype == "text/html" and html_part is None:
-            html_part = part
-    if text_part is not None:
-        return part_payload(text_part)
-    if html_part is not None:
-        return html_to_text(part_payload(html_part))
-    return ""
-
-
-def attachments(eml):
+def addr_list(header_val):
+    """email.utils.getaddresses -> [{"name":..., "address":...}]."""
     out = []
-    for part in eml.walk():
-        if part.is_multipart():
-            continue
-        fname = part.get_filename()
-        if not fname and part.get_content_disposition() != "attachment":
-            continue
-        out.append({
-            "name": fname or "(unnamed)",
-            "contentType": part.get_content_type(),
-            "size": len(part.get_payload(decode=True) or b""),
-        })
+    for name, addr in email.utils.getaddresses([header_val or ""]):
+        if addr:
+            out.append({"name": name, "address": addr})
     return out
 
 
-def msg_dict(eml, account, message_id, folder, flags=""):
-    """Normalize an EmailMessage into the shared message dict."""
-    date = eml.get("Date")
-    try:
-        iso = email.utils.parsedate_to_datetime(date).strftime("%Y-%m-%dT%H:%M:%SZ") if date else None
-    except (TypeError, ValueError):
-        iso = None
-    interesting = [
-        "Message-ID", "In-Reply-To", "References", "Authentication-Results",
-        "Received-SPF", "DKIM-Signature", "X-Spam-Flag", "X-Spam-Status",
-        "X-Pm-External-Id", "Reply-To",
-    ]
-    return {
-        "id": message_id,
-        "account": account,
-        "folder": folder,
-        "from": addr_list(eml.get("From")),
-        "to": addr_list(eml.get("To")),
-        "cc": addr_list(eml.get("Cc")),
-        "subject": str(eml.get("Subject", "")),
-        "date": iso,
-        "unread": "\\Seen" not in flags,
-        "snippet": collapse_ws(body_to_text(eml))[:280],
-        "attachments": attachments(eml),
-        "headers": {k: str(eml.get(k)) for k in interesting if eml.get(k)},
-    }
-
-
-def fetch_raw(imap, uid):
-    """imap.uid FETCH RFC822+FLAGS -> (raw_bytes, flags_string)."""
-    typ, data = imap.uid("FETCH", uid, "(RFC822 FLAGS)")
-    if typ != "OK" or not data:
-        raise ToolError("message %s not found" % uid)
-    raw, flags = b"", ""
-    for item in data:
-        if isinstance(item, tuple):
-            raw = item[1]
-        else:
-            m = re.search(rb"FLAGS \(([^)]*)\)", item)
-            if m:
-                flags = m.group(1).decode("ascii", "replace")
-    if not raw:
-        raise ToolError("message %s not found (empty fetch)" % uid)
-    return raw, flags
-
-
-def search_uids(imap, criteria):
-    typ, data = imap.uid("SEARCH", None, criteria or "ALL")
-    if typ != "OK":
-        raise ToolError("IMAP search failed: %r" % (data,))
-    if not data or not data[0]:
-        return []
-    return [int(x) for x in data[0].split()]
-
-
-def select_uids(imap, folder_name, readonly=True):
-    typ, data = imap.select(folder_name, readonly=readonly)
-    if typ != "OK":
-        raise ToolError("IMAP select %s failed: %r" % (folder_name, data))
-    uv = re.search(rb"UIDVALIDITY (\d+)", b"\n".join(d if isinstance(d, bytes) else b"" for d in data))
-    return uv.group(1).decode() if uv else "0"
-
-
-def _imap_quote(value):
-    return str(value).replace("\\", "").replace('"', "")
-
-
-def _which(binary):
-    for p in os.environ.get("PATH", "").split(os.pathsep):
-        cand = os.path.join(p, binary)
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
-            return cand
-    return None
-
-
-def _parse_proton_id(message_id):
-    m = re.fullmatch(r"([a-z]+):(\d+)", str(message_id))
-    if not m or m.group(1) not in PROTON_FOLDERS:
-        raise ToolError("invalid Proton message id %r; use ids returned by list/search/read tools" % (message_id,))
-    return m.group(1), int(m.group(2))
-
-
-def _parse_draft_id(draft_id):
-    m = re.fullmatch(r"drafts:(\d+)@(\d+)", str(draft_id))
-    if not m:
-        raise ToolError("invalid Proton draft id %r; use the draft_id returned by draft_new/draft_reply" % (draft_id,))
-    return int(m.group(1)), m.group(2)
+def split_addrs(value):
+    return [a for _, a in email.utils.getaddresses([str(value)]) if a]
 
 
 # ---------------------------------------------------------------- Outlook (Microsoft Graph)
@@ -475,6 +310,8 @@ class Outlook:
                 msg = err.get("message") or err.get("code") or detail[:200]
             except ValueError:
                 msg = detail[:200]
+            if e.code == 403 and "Send" in msg:
+                msg += " (your login has read scopes; run: email-mcp login outlook --write to add Mail.ReadWrite + Mail.Send)"
             raise ToolError("Graph HTTP %s: %s" % (e.code, msg))
 
     def _folder_id(self, folder):
@@ -563,10 +400,10 @@ class Outlook:
         payload = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
-            "toRecipients": [{"emailAddress": {"address": t}} for t in _split_addrs(to)],
+            "toRecipients": [{"emailAddress": {"address": t}} for t in split_addrs(to)],
         }
         if cc:
-            payload["ccRecipients"] = [{"emailAddress": {"address": t}} for t in _split_addrs(cc)]
+            payload["ccRecipients"] = [{"emailAddress": {"address": t}} for t in split_addrs(cc)]
         data = self._req("POST", "/me/messages", data=payload)
         return {"draft_id": data.get("id"), "account": "outlook",
                 "to": payload["toRecipients"], "cc": payload.get("ccRecipients", []),
@@ -615,369 +452,6 @@ class Outlook:
         return {"permanently_deleted": deleted, "count": len(deleted), "failed": failed}
 
 
-def _split_addrs(value):
-    return [a for _, a in email.utils.getaddresses([str(value)]) if a]
-
-
-# ---------------------------------------------------------------- Proton (Bridge IMAP/SMTP)
-
-class Proton:
-    def __init__(self):
-        self.creds = read_json(PROTON_CREDS)
-        self.spawned_pid = None
-
-    @property
-    def configured(self):
-        return bool(self.creds and self.creds.get("username") and self.creds.get("password"))
-
-    def username(self):
-        if not self.configured:
-            return None
-        u = self.creds["username"]
-        return u if "@" not in u else u.split("@")[0][:2] + "***@" + u.split("@")[1]
-
-    def _port_open(self, port):
-        try:
-            with socket.create_connection((IMAP_HOST, port), timeout=2):
-                return True
-        except OSError:
-            return False
-
-    def ensure_bridge(self):
-        """Start the Bridge daemon only if nothing is listening; remember that we started it."""
-        if self._port_open(IMAP_PORT):
-            return
-        if not _which(BRIDGE_BIN):
-            raise ToolError(
-                "Proton Mail Bridge is not installed. Install it from the official Arch repo: "
-                "sudo pacman -S protonmail-bridge")
-        try:
-            self.spawned_pid = subprocess.Popen(
-                [BRIDGE_BIN, "--noninteractive"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True).pid
-        except OSError as e:
-            raise ToolError("failed to start Proton Mail Bridge: %s" % e)
-        deadline = time.time() + 20
-        while time.time() < deadline:
-            if self._port_open(IMAP_PORT):
-                return
-            time.sleep(0.5)
-        raise ToolError("Proton Mail Bridge started but IMAP port %s did not open "
-                        "(is a secret service/keyring running, e.g. gnome-keyring?)." % IMAP_PORT)
-
-    def shutdown(self):
-        if self.spawned_pid:
-            try:
-                os.kill(self.spawned_pid, 15)
-            except OSError:
-                pass
-            self.spawned_pid = None
-
-    def _cert_path(self):
-        if BRIDGE_CERT and os.path.exists(BRIDGE_CERT):
-            return BRIDGE_CERT
-        candidates = []
-        for pat in ("~/.config/protonmail/bridge-v3/**/cert.pem",
-                    "~/.config/protonmail/bridge-v3/**/cert.pem.tmp",
-                    "~/.config/protonmail/bridge/**/cert.pem"):
-            candidates.extend(glob.glob(os.path.expanduser(pat), recursive=True))
-        if not candidates:
-            raise ToolError("Could not find the Bridge TLS certificate. Open the Bridge GUI, "
-                            "go to Settings -> Advanced -> Export TLS certificate, and set "
-                            "EMAIL_BRIDGE_CERT to the exported file.")
-        return max(candidates, key=os.path.getmtime)
-
-    def _ssl_ctx(self):
-        ctx = ssl.create_default_context(cafile=self._cert_path())
-        # The Bridge cert is issued for 127.0.0.1; standard hostname checks still apply.
-        return ctx
-
-    def _connect(self):
-        self.ensure_bridge()
-        try:
-            imap = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, ssl_context=self._ssl_ctx(), timeout=30)
-        except (OSError, ssl.SSLError, imaplib.IMAP4.error) as e:
-            raise ToolError("cannot connect to Bridge IMAP: %s" % e)
-        try:
-            typ, data = imap.login(self.creds["username"], self.creds["password"])
-            if typ != "OK":
-                raise ToolError("Bridge IMAP login failed: %r" % (data,))
-        except imaplib.IMAP4.error as e:
-            raise ToolError("Bridge IMAP login failed (%s). If the Bridge has no account yet, "
-                            "open the GUI and add your account first (requires a paid Proton plan)." % e)
-        return imap
-
-    def _folder_name(self, imap, canonical):
-        """Resolve canonical name to the actual IMAP folder; raises for missing folders (e.g. no Spam)."""
-        typ, data = imap.list()
-        if typ != "OK":
-            raise ToolError("IMAP LIST failed")
-        names = []
-        for item in data:
-            m = re.search(rb'"([^"]*)"\s*$', item)
-            if m:
-                names.append(m.group(1).decode("utf-8", "replace"))
-        wanted = PROTON_FOLDERS[canonical]
-        for name in names:
-            if name.lower() in wanted:
-                return name
-        raise ToolError("folder %r not found on the Bridge (available: %s)" % (canonical, ", ".join(names)))
-
-    def _criteria(self, sender, subject, text, since, before, unread_only):
-        terms = []
-        if sender:
-            terms.append('FROM "%s"' % _imap_quote(sender))
-        if subject:
-            terms.append('SUBJECT "%s"' % _imap_quote(subject))
-        if text:
-            terms.append('TEXT "%s"' % _imap_quote(text))
-        if since:
-            terms.append("SINCE %s" % imap_date(parse_iso_date(since)))
-        if before:
-            terms.append("BEFORE %s" % imap_date(parse_iso_date(before)))
-        if unread_only:
-            terms.append("UNSEEN")
-        return " ".join(terms)
-
-    def _fetch_msg(self, imap, canonical, uid):
-        raw, flags = fetch_raw(imap, uid)
-        eml = email.parser.BytesParser().parsebytes(raw)
-        return msg_dict(eml, "proton", "%s:%s" % (canonical, uid), canonical, flags)
-
-    def list_messages(self, folder="inbox", limit=10, unread_only=False, sender=None, subject=None, since=None, before=None):
-        with _imap_ctx(self) as (imap, _name, _uv):
-            select_uids(imap, self._folder_name(imap, folder))
-            uids = search_uids(imap, self._criteria(sender, subject, None, since, before, unread_only))
-            uids = uids[-min(int(limit or 10), 50):]  # IMAP returns oldest first
-            out = [self._fetch_msg(imap, folder, uid) for uid in uids]
-            out.reverse()
-            return out
-
-    def search(self, query, folder="inbox", limit=25):
-        with _imap_ctx(self) as (imap, _name, _uv):
-            select_uids(imap, self._folder_name(imap, folder))
-            uids = search_uids(imap, 'TEXT "%s"' % _imap_quote(query))
-            uids = uids[-min(int(limit or 25), 50):]
-            out = [self._fetch_msg(imap, folder, uid) for uid in uids]
-            out.reverse()
-            return out
-
-    def read(self, message_id):
-        folder, uid = _parse_proton_id(message_id)
-        with _imap_ctx(self) as (imap, _name, _uv):
-            select_uids(imap, self._folder_name(imap, folder))
-            raw, flags = fetch_raw(imap, uid)
-            eml = email.parser.BytesParser().parsebytes(raw)
-            out = msg_dict(eml, "proton", message_id, folder, flags)
-            out["body"] = body_to_text(eml)
-            return out
-
-    def thread(self, message_id):
-        folder, uid = _parse_proton_id(message_id)
-        with _imap_ctx(self) as (imap, _name, _uv):
-            select_uids(imap, self._folder_name(imap, folder))
-            raw, _ = fetch_raw(imap, uid)
-            root = email.parser.BytesParser().parsebytes(raw)
-            mids = set()
-            for hdr in ("Message-ID", "In-Reply-To", "References"):
-                val = root.get(hdr)
-                if val:
-                    mids.update(re.findall(r"<[^>]+>", val))
-            related = {uid}
-            # shortcut: walk at most 10 reference ids; enough for normal threads, avoids unbounded searches
-            for mid in list(mids)[:10]:
-                for hdr in ("Message-ID", "References", "In-Reply-To"):
-                    for u in search_uids(imap, 'HEADER %s "%s"' % (hdr, _imap_quote(mid.strip("<>")))):
-                        related.add(u)
-                    if len(related) >= 50:
-                        break
-                if len(related) >= 50:
-                    break
-            msgs = []
-            for u in related:
-                raw_u, flags_u = fetch_raw(imap, u)
-                eml = email.parser.BytesParser().parsebytes(raw_u)
-                msgs.append(msg_dict(eml, "proton", "%s:%s" % (folder, u), folder, flags_u))
-            msgs.sort(key=lambda m: m.get("date") or "")
-            return msgs
-
-    def draft_new(self, to, subject, body, cc=None):
-        msg = email.message.EmailMessage()
-        msg["From"] = self.creds["username"]
-        msg["To"] = to
-        if cc:
-            msg["Cc"] = cc
-        msg["Subject"] = subject
-        msg["Date"] = email.utils.formatdate(localtime=True)
-        msg["Message-ID"] = email.utils.make_msgid()
-        msg.set_content(body)
-        with _imap_ctx(self, readonly=False) as (imap, _name, _uv):
-            drafts_name = self._folder_name(imap, "drafts")
-            imap.append(drafts_name, "(\\Draft)", None, msg.as_bytes())
-            uv = select_uids(imap, drafts_name)
-            uids = search_uids(imap, 'HEADER Message-ID "%s"' % _imap_quote(msg["Message-ID"]))
-            if not uids:
-                raise ToolError("draft appended but could not be re-found")
-        return {"draft_id": "drafts:%s@%s" % (uids[-1], uv), "account": "proton",
-                "to": to, "cc": cc, "subject": subject, "body": body,
-                "note": "Draft saved to Drafts. Nothing was sent."}
-
-    def draft_reply(self, message_id, body):
-        folder, uid = _parse_proton_id(message_id)
-        with _imap_ctx(self) as (imap, _name, _uv):
-            select_uids(imap, self._folder_name(imap, folder))
-            raw, _ = fetch_raw(imap, uid)
-            orig = email.parser.BytesParser().parsebytes(raw)
-            to = orig.get("Reply-To") or orig.get("From")
-            subj = orig.get("Subject") or "(no subject)"
-            if not subj.lower().startswith("re:"):
-                subj = "Re: " + subj
-            msg = email.message.EmailMessage()
-            msg["From"] = self.creds["username"]
-            msg["To"] = to
-            msg["Subject"] = subj
-            msg["Date"] = email.utils.formatdate(localtime=True)
-            if orig.get("Message-ID"):
-                msg["In-Reply-To"] = orig["Message-ID"]
-                refs = (orig.get("References") or "").strip()
-                msg["References"] = (refs + " " if refs else "") + orig["Message-ID"]
-            msg["Message-ID"] = email.utils.make_msgid()
-            msg.set_content(body)
-            drafts_name = self._folder_name(imap, "drafts")
-            imap.append(drafts_name, "(\\Draft)", None, msg.as_bytes())
-            uv = select_uids(imap, drafts_name)
-            uids = search_uids(imap, 'HEADER Message-ID "%s"' % _imap_quote(msg["Message-ID"]))
-        return {"draft_id": "drafts:%s@%s" % (uids[-1], uv), "account": "proton",
-                "reply_to": addr_list(to), "subject": subj, "body": body,
-                "note": "Reply draft saved to Drafts with In-Reply-To/References preserved. Nothing was sent."}
-
-    def send_draft(self, draft_id):
-        uid, uv = _parse_draft_id(draft_id)
-        with _imap_ctx(self) as (imap, _name, _uv):
-            drafts_name = self._folder_name(imap, "drafts")
-            cur_uv = select_uids(imap, drafts_name)
-            if cur_uv != uv:
-                raise ToolError("draft id is stale (UIDVALIDITY changed); find the draft again via list_messages(folder='drafts')")
-            raw, _ = fetch_raw(imap, uid)
-            msg = email.parser.BytesParser().parsebytes(raw)
-        self._smtp_send(msg)
-        # Standard client behaviour: a sent draft is consumed. Move it to Trash (recoverable).
-        with _imap_ctx(self, readonly=False) as (imap, _name, _uv):
-            drafts_name = self._folder_name(imap, "drafts")
-            select_uids(imap, drafts_name, readonly=False)
-            trash_name = self._folder_name(imap, "trash")
-            imap.uid("COPY", str(uid), trash_name)
-            imap.uid("STORE", str(uid), "+FLAGS", "(\\Deleted)")
-            imap.expunge()
-        return {"sent": True, "draft_id": draft_id, "subject": msg.get("Subject"),
-                "to": [a["address"] for a in addr_list(msg.get("To"))],
-                "note": "Sent via the Bridge SMTP; the consumed draft was moved to Trash."}
-
-    def _smtp_send(self, msg):
-        ctx = self._ssl_ctx()
-        server = None
-        try:
-            server = smtplib.SMTP(IMAP_HOST, SMTP_PORT, timeout=30)
-            server.ehlo()
-            server.starttls(context=ctx)
-            server.ehlo()
-        except (smtplib.SMTPException, ssl.SSLError, OSError):
-            # Bridge may offer implicit TLS on the SMTP port instead.
-            try:
-                server = smtplib.SMTP_SSL(IMAP_HOST, SMTP_PORT, context=ctx, timeout=30)
-            except (smtplib.SMTPException, ssl.SSLError, OSError) as e:
-                raise ToolError("cannot reach Bridge SMTP on %s:%s: %s" % (IMAP_HOST, SMTP_PORT, e))
-        try:
-            server.login(self.creds["username"], self.creds["password"])
-            server.send_message(msg)
-        except (smtplib.SMTPException, ssl.SSLError) as e:
-            raise ToolError("Bridge SMTP send failed: %s" % e)
-        finally:
-            try:
-                server.quit()
-            except Exception:
-                pass
-
-    def move(self, message_ids, folder):
-        moved, failed = [], []
-        with _imap_ctx(self, readonly=False) as (imap, _name, _uv):
-            target = self._folder_name(imap, folder)
-            per_source = {}
-            for mid in message_ids:
-                src, uid = _parse_proton_id(mid)
-                per_source.setdefault(src, []).append(uid)
-            for src, uids in per_source.items():
-                try:
-                    select_uids(imap, self._folder_name(imap, src), readonly=False)
-                    uidset = ",".join(str(u) for u in uids)
-                    typ, data = imap.uid("COPY", uidset, target)
-                    if typ != "OK":
-                        raise ToolError("COPY failed: %r" % (data,))
-                    imap.uid("STORE", uidset, "+FLAGS", "(\\Deleted)")
-                    imap.expunge()
-                    moved.extend("%s:%s" % (src, u) for u in uids)
-                except (ToolError, imaplib.IMAP4.error) as e:
-                    failed.append({"ids": ["%s:%s" % (src, u) for u in uids], "error": str(e)})
-        return {"moved": moved, "count": len(moved), "failed": failed, "folder": folder}
-
-    def delete_permanently(self, message_ids):
-        deleted, failed = [], []
-        with _imap_ctx(self, readonly=False) as (imap, _name, _uv):
-            trash_name = self._folder_name(imap, "trash")
-            to_purge = []
-            for mid in message_ids:
-                src, uid = _parse_proton_id(mid)
-                try:
-                    if src != "trash":
-                        select_uids(imap, self._folder_name(imap, src), readonly=False)
-                        raw, _ = fetch_raw(imap, uid)
-                        msgid = email.parser.BytesParser().parsebytes(raw).get("Message-ID")
-                        imap.uid("COPY", str(uid), trash_name)
-                        imap.uid("STORE", str(uid), "+FLAGS", "(\\Deleted)")
-                        imap.expunge()
-                        to_purge.append(msgid)
-                    else:
-                        select_uids(imap, trash_name, readonly=False)
-                        raw, _ = fetch_raw(imap, uid)
-                        msgid = email.parser.BytesParser().parsebytes(raw).get("Message-ID")
-                        to_purge.append(msgid)
-                    deleted.append(mid)
-                except (ToolError, imaplib.IMAP4.error) as e:
-                    failed.append({"id": mid, "error": str(e)})
-            if to_purge:
-                select_uids(imap, trash_name, readonly=False)
-                for msgid in to_purge:
-                    for f in search_uids(imap, 'HEADER Message-ID "%s"' % _imap_quote(msgid or "")):
-                        imap.uid("STORE", str(f), "+FLAGS", "(\\Deleted)")
-                imap.expunge()
-        return {"permanently_deleted": deleted, "count": len(deleted), "failed": failed}
-
-
-class _imap_ctx:
-    """Context manager: one authenticated IMAP session. readonly=False allows writes."""
-
-    def __init__(self, proton, readonly=True):
-        self.proton = proton
-        self.readonly = readonly
-        self.imap = None
-
-    def __enter__(self):
-        if not self.proton.configured:
-            raise ToolError("Proton credentials missing. Run: email-mcp login proton")
-        self.imap = self.proton._connect()
-        uv = select_uids(self.imap, "INBOX", readonly=self.readonly)
-        return self.imap, "inbox", uv
-
-    def __exit__(self, *exc):
-        if self.imap is not None:
-            try:
-                self.imap.logout()
-            except Exception:
-                pass
-        return False
-
-
 # ---------------------------------------------------------------- gates (enforced in code)
 
 def gate_send(confirm):
@@ -1016,214 +490,168 @@ def _bool(desc):
     return {"type": "boolean", "description": desc}
 
 
+def _int(desc):
+    return {"type": "integer", "description": desc}
+
+
 TOOLS = [
     {
         "name": "email_accounts",
-        "description": "Show which mail accounts are configured and their status (no secrets). Use this first to see what is available.",
+        "description": "Show the Outlook account status (signed in as, granted scopes, token expiry; no secrets). Use this first to see whether the account is ready.",
         "inputSchema": _tool_schema({}, []),
     },
     {
         "name": "list_messages",
-        "description": "List messages newest-first. account: 'outlook', 'proton', or 'both'. "
-                       "folder: inbox, spam, trash, drafts, archive, sent. Optional filters: sender, subject, unread_only, since/before (YYYY-MM-DD).",
+        "description": "List Outlook messages newest-first. folder: inbox, spam (Junk Email), trash, drafts, archive, sent. Optional filters: sender, subject, unread_only, since/before (YYYY-MM-DD).",
         "inputSchema": _tool_schema({
-            "account": _str("Account to query: outlook, proton, or both", enum=["outlook", "proton", "both"]),
             "folder": _str("Folder name", enum=VALID_FOLDERS),
-            "limit": {"type": "integer", "description": "Max messages (default 10, max 50)"},
+            "limit": _int("Max messages (default 10, max 50)"),
             "unread_only": _bool("Only unread messages"),
             "sender": _str("Filter by sender email address"),
             "subject": _str("Filter by subject substring"),
             "since": _str("Only messages on/after this date (YYYY-MM-DD)"),
             "before": _str("Only messages before this date (YYYY-MM-DD)"),
-        }, ["account"]),
+        }, []),
     },
     {
         "name": "search_messages",
-        "description": "Full-text/keyword search in one account or both. Returns matching messages newest-first.",
+        "description": "Full-text/keyword search in Outlook. Returns matching messages newest-first.",
         "inputSchema": _tool_schema({
-            "account": _str("Account to query", enum=["outlook", "proton", "both"]),
             "query": _str("Keywords to search for"),
             "folder": _str("Folder to search in", enum=VALID_FOLDERS),
-            "limit": {"type": "integer", "description": "Max results (default 25, max 50)"},
-        }, ["account", "query"]),
+            "limit": _int("Max results (default 25, max 50)"),
+        }, ["query"]),
     },
     {
         "name": "read_message",
-        "description": "Read one full message: sender, recipients, subject, date, headers and complete body. Attachments are listed but never downloaded.",
+        "description": "Read one full Outlook message: sender, recipients, subject, date, headers and complete body. Attachments are listed but never downloaded.",
         "inputSchema": _tool_schema({
-            "account": _str("Account", enum=["outlook", "proton"]),
             "message_id": _str("Message id from list/search results"),
-        }, ["account", "message_id"]),
+        }, ["message_id"]),
     },
     {
         "name": "read_thread",
-        "description": "Read the full conversation a message belongs to, oldest-first.",
+        "description": "Read the full Outlook conversation a message belongs to, oldest-first.",
         "inputSchema": _tool_schema({
-            "account": _str("Account", enum=["outlook", "proton"]),
             "message_id": _str("Any message id from the thread"),
-        }, ["account", "message_id"]),
+        }, ["message_id"]),
     },
     {
         "name": "list_spam",
-        "description": "List messages in the Spam/Junk folder (newest first) for one or both accounts.",
+        "description": "List messages in the Outlook Junk Email folder (newest first).",
         "inputSchema": _tool_schema({
-            "account": _str("Account", enum=["outlook", "proton", "both"]),
-            "limit": {"type": "integer", "description": "Max messages (default 20, max 50)"},
-        }, ["account"]),
+            "limit": _int("Max messages (default 20, max 50)"),
+        }, []),
     },
     {
         "name": "draft_new",
-        "description": "Create a draft email (NOT sent). Returns a draft_id. Sending requires the separate send_draft tool with user approval.",
+        "description": "Create an Outlook draft email (NOT sent). Returns a draft_id. Sending requires the separate send_draft tool with user approval.",
         "inputSchema": _tool_schema({
-            "account": _str("Account to draft in", enum=["outlook", "proton"]),
             "to": _str("Recipient address(es)"),
             "subject": _str("Subject"),
             "body": _str("Message body (plain text)"),
             "cc": _str("CC address(es), optional"),
-        }, ["account", "to", "subject", "body"]),
+        }, ["to", "subject", "body"]),
     },
     {
         "name": "draft_reply",
-        "description": "Create a reply draft to an existing message (NOT sent). Thread metadata (In-Reply-To/References/conversation) is preserved. Returns a draft_id.",
+        "description": "Create an Outlook reply draft to an existing message (NOT sent). Thread metadata (conversation, recipients) is preserved. Returns a draft_id.",
         "inputSchema": _tool_schema({
-            "account": _str("Account", enum=["outlook", "proton"]),
             "message_id": _str("Message id to reply to"),
             "body": _str("Reply body (plain text)"),
-        }, ["account", "message_id", "body"]),
+        }, ["message_id", "body"]),
     },
     {
         "name": "send_draft",
-        "description": "Send a previously created draft. HARD GATE: confirm must be true, set only after the user has seen the complete final message and approved THIS send.",
+        "description": "Send a previously created Outlook draft. HARD GATE: confirm must be true, set only after the user has seen the complete final message and approved THIS send.",
         "inputSchema": _tool_schema({
-            "account": _str("Account", enum=["outlook", "proton"]),
             "draft_id": _str("draft_id from draft_new/draft_reply"),
             "confirm": _bool("User-approved send: set true only after explicit approval"),
-        }, ["account", "draft_id", "confirm"]),
+        }, ["draft_id", "confirm"]),
     },
     {
         "name": "move_to_folder",
-        "description": "Move selected messages to spam, trash, or archive. HARD GATE: confirm must be true after showing the user the exact messages and count.",
+        "description": "Move selected Outlook messages to Junk Email, Deleted Items, or Archive. HARD GATE: confirm must be true after showing the user the exact messages and count.",
         "inputSchema": _tool_schema({
-            "account": _str("Account", enum=["outlook", "proton"]),
             "message_ids": {"type": "array", "items": {"type": "string"},
                             "description": "Message ids to move (max 100 per call)"},
             "folder": _str("Target folder", enum=MOVE_TARGETS),
             "confirm": _bool("User-approved move"),
-        }, ["account", "message_ids", "folder", "confirm"]),
+        }, ["message_ids", "folder", "confirm"]),
     },
     {
         "name": "delete_permanently",
-        "description": "Permanently delete messages (unrecoverable). HARD GATE: confirmation must be the exact string 'PERMANENTLY DELETE', given separately from any other approval. Prefer move_to_folder(trash) instead.",
+        "description": "Permanently delete Outlook messages (unrecoverable). HARD GATE: confirmation must be the exact string 'PERMANENTLY DELETE', given separately from any other approval. Prefer move_to_folder(trash) instead.",
         "inputSchema": _tool_schema({
-            "account": _str("Account", enum=["outlook", "proton"]),
             "message_ids": {"type": "array", "items": {"type": "string"},
                             "description": "Message ids to permanently delete"},
             "confirmation": _str("Must be the exact string: PERMANENTLY DELETE"),
-        }, ["account", "message_ids", "confirmation"]),
-    },
-    {
-        "name": "email_shutdown",
-        "description": "Stop any Proton Mail Bridge process that was started on demand. Safe to call any time; an already-running Bridge is left alone.",
-        "inputSchema": _tool_schema({}, []),
+        }, ["message_ids", "confirmation"]),
     },
 ]
 
-BACKENDS = {}
+_backend = None
 
 
-def _backend(account):
-    if account == "outlook":
-        if "outlook" not in BACKENDS:
-            BACKENDS["outlook"] = Outlook()
-        return BACKENDS["outlook"]
-    if account == "proton":
-        if "proton" not in BACKENDS:
-            BACKENDS["proton"] = Proton()
-        return BACKENDS["proton"]
-    raise ToolError("unknown account %r; use outlook or proton" % (account,))
-
-
-def _both_or_one(account, fn):
-    if account == "both":
-        out = {}
-        for acc in ("outlook", "proton"):
-            try:
-                out[acc] = fn(acc)
-            except ToolError as e:
-                out[acc] = {"error": str(e)}
-        return out
-    return fn(account)
+def _get_backend():
+    global _backend
+    if _backend is None:
+        _backend = Outlook()
+    return _backend
 
 
 def tool_email_accounts(_args):
-    o = _backend("outlook")
-    p = _backend("proton")
+    o = _get_backend()
     return {
         "outlook": {
             "configured": o.configured,
             "email": o.account_email(),
             "scopes": o.scopes(),
             "expires_at": (o.tokens or {}).get("expires_at"),
-        },
-        "proton": {
-            "configured": p.configured,
-            "username": p.username(),
-            "bridge_listening": p._port_open(IMAP_PORT),
+            "write_enabled": bool(o.scopes() and "Mail.ReadWrite" in o.scopes()),
         },
     }
 
 
 def tool_list_messages(args):
-    def one(acc):
-        b = _backend(acc)
-        return {"account": acc, "messages": b.list_messages(
-            folder=args.get("folder") or "inbox",
-            limit=args.get("limit", 10),
-            unread_only=bool(args.get("unread_only")),
-            sender=args.get("sender"),
-            subject=args.get("subject"),
-            since=args.get("since"),
-            before=args.get("before"))}
-    return _both_or_one(args["account"], one)
+    return {"account": "outlook", "messages": _get_backend().list_messages(
+        folder=args.get("folder") or "inbox",
+        limit=args.get("limit", 10),
+        unread_only=bool(args.get("unread_only")),
+        sender=args.get("sender"),
+        subject=args.get("subject"),
+        since=args.get("since"),
+        before=args.get("before"))}
 
 
 def tool_search(args):
-    def one(acc):
-        b = _backend(acc)
-        return {"account": acc, "messages": b.search(
-            args["query"], folder=args.get("folder") or "inbox", limit=args.get("limit", 25))}
-    return _both_or_one(args["account"], one)
+    return {"account": "outlook", "messages": _get_backend().search(
+        args["query"], folder=args.get("folder") or "inbox", limit=args.get("limit", 25))}
 
 
 def tool_read(args):
-    def one(acc):
-        return _backend(acc).read(args["message_id"])
-    return _both_or_one(args["account"], one)
+    return _get_backend().read(args["message_id"])
 
 
 def tool_thread(args):
-    def one(acc):
-        return {"account": acc, "messages": _backend(acc).thread(args["message_id"])}
-    return _both_or_one(args["account"], one)
+    return {"account": "outlook", "messages": _get_backend().thread(args["message_id"])}
 
 
 def tool_list_spam(args):
-    def one(acc):
-        return {"account": acc, "messages": _backend(acc).list_messages(folder="spam", limit=args.get("limit", 20))}
-    return _both_or_one(args["account"], one)
+    return {"account": "outlook", "messages": _get_backend().list_messages(folder="spam", limit=args.get("limit", 20))}
 
 
 def tool_draft_new(args):
-    return _backend(args["account"]).draft_new(args["to"], args["subject"], args["body"], args.get("cc"))
+    return _get_backend().draft_new(args["to"], args["subject"], args["body"], args.get("cc"))
 
 
 def tool_draft_reply(args):
-    return _backend(args["account"]).draft_reply(args["message_id"], args["body"])
+    return _get_backend().draft_reply(args["message_id"], args["body"])
 
 
 def tool_send_draft(args):
     gate_send(args.get("confirm"))
-    return _backend(args["account"]).send_draft(args["draft_id"])
+    return _get_backend().send_draft(args["draft_id"])
 
 
 def tool_move(args):
@@ -1231,7 +659,7 @@ def tool_move(args):
     if not ids:
         raise ToolError("message_ids is empty")
     gate_move(args.get("confirm"), len(ids))
-    return _backend(args["account"]).move(ids, args["folder"])
+    return _get_backend().move(ids, args["folder"])
 
 
 def tool_delete(args):
@@ -1239,15 +667,7 @@ def tool_delete(args):
     if not ids:
         raise ToolError("message_ids is empty")
     gate_delete(args.get("confirmation"))
-    return _backend(args["account"]).delete_permanently(ids)
-
-
-def tool_shutdown(_args):
-    p = _backend("proton")
-    was_spawned = p.spawned_pid is not None
-    p.shutdown()
-    return {"bridge_spawned_by_us": was_spawned,
-            "note": "Bridge stopped" if was_spawned else "Bridge was not started by this session; left running"}
+    return _get_backend().delete_permanently(ids)
 
 
 TOOL_IMPL = {
@@ -1262,7 +682,6 @@ TOOL_IMPL = {
     "send_draft": tool_send_draft,
     "move_to_folder": tool_move,
     "delete_permanently": tool_delete,
-    "email_shutdown": tool_shutdown,
 }
 
 
@@ -1325,15 +744,12 @@ def serve():
 # ---------------------------------------------------------------- CLI modes
 
 def cmd_status():
-    o = _backend("outlook")
-    p = _backend("proton")
+    o = _get_backend()
     print("email-mcp status")
-    print("  Outlook:  %s" % ("signed in as %s (scopes: %s)" % (o.account_email(), o.scopes())
-                             if o.configured else "not signed in (run: email-mcp login outlook)"))
-    print("  Proton:   %s" % ("credentials stored for %s" % p.username()
-                             if p.configured else "no credentials (run: email-mcp login proton)"))
-    print("  Bridge:   %s" % ("listening on %s:%s" % (IMAP_HOST, IMAP_PORT)
-                             if p._port_open(IMAP_PORT) else "not running (starts on demand)"))
+    if o.configured:
+        print("  Outlook:  signed in as %s (scopes: %s)" % (o.account_email(), o.scopes()))
+    else:
+        print("  Outlook:  not signed in (run: email-mcp login outlook)")
     print("  Secrets:  %s (no secrets printed here)" % SECRETS_DIR)
 
 
@@ -1341,42 +757,41 @@ def cmd_login(args):
     account = args[0] if args else None
     if account == "outlook":
         Outlook().device_login(write="--write" in args)
-    elif account == "proton":
-        username = input("Proton address (as shown in Bridge account settings): ").strip()
-        if not username or "@" not in username:
-            raise SystemExit("invalid Proton address")
-        password = getpass.getpass("Bridge IMAP/SMTP password (from Bridge account settings): ")
-        if not password:
-            raise SystemExit("empty password")
-        write_json_secret(PROTON_CREDS, {"username": username, "password": password})
-        print("Stored in %s (chmod 600)." % PROTON_CREDS)
-        p = _backend("proton")
-        try:
-            with _imap_ctx(p) as (imap, _name, _uv):
-                typ, data = imap.list()
-                folders = [re.search(rb'"([^"]*)"\s*$', d).group(1).decode() for d in data
-                           if re.search(rb'"([^"]*)"\s*$', d)]
-                print("Connection OK. Folders: %s" % ", ".join(folders))
-        except ToolError as e:
-            print("Warning: could not verify the credentials yet: %s" % e)
     else:
-        raise SystemExit("usage: email-mcp login outlook|proton [--write]")
+        raise SystemExit("usage: email-mcp login outlook [--write]")
 
 
 def cmd_revoke(args):
     account = args[0] if args else None
     if account == "outlook":
         Outlook().revoke()
-    elif account == "proton":
-        if os.path.exists(PROTON_CREDS):
-            os.remove(PROTON_CREDS)
-        print("Local Proton credentials deleted. To fully disconnect, also remove the account "
-              "in the Bridge GUI (Settings -> Accounts).")
     else:
-        raise SystemExit("usage: email-mcp revoke outlook|proton")
+        raise SystemExit("usage: email-mcp revoke outlook")
 
 
 # ---------------------------------------------------------------- selfcheck (mocks/dry runs)
+
+class _FakeGraph:
+    """Canned Microsoft Graph backend recording every request; no network."""
+
+    def __init__(self, routes):
+        self.routes = routes
+        self.calls = []
+        self._regexes = [(re.compile("^" + re.escape(k[1]).replace(r"\#", r"[^/]+") + "$"), k)
+                         for k in routes]
+
+    def __call__(self, method, path, data=None, params=None, retry=True):
+        self.calls.append({"method": method, "path": path, "data": data, "params": params})
+        handler = self.routes.get((method, path))
+        if handler is None:
+            for rx, key in self._regexes:
+                if key[0] == method and rx.match(path):
+                    handler = self.routes[key]
+                    break
+        if handler is None:
+            raise ToolError("unexpected call %s %s" % (method, path))
+        return handler(path, data, params, self.calls)
+
 
 def selfcheck():
     failures = []
@@ -1422,50 +837,147 @@ def selfcheck():
             assert tool.get("name") and tool.get("description"), tool
             json.dumps(tool["inputSchema"])
         assert set(TOOL_IMPL) == {t["name"] for t in TOOLS}, "impl/tool mismatch"
+        assert len(TOOLS) == 11, "expected 11 Outlook tools, got %d" % len(TOOLS)
+        # No Proton remnants: no account selection, no bridge tool
+        for tool in TOOLS:
+            blob = json.dumps(tool)
+            assert "account" not in tool["inputSchema"]["properties"], tool["name"]
+            assert "both" not in blob and "proton" not in blob and "bridge" not in blob.lower(), tool["name"]
+        assert "email_shutdown" not in TOOL_IMPL
 
     def builders():
-        assert imap_date("2026-11-26") == "26-Nov-2026"
         assert parse_iso_date("2026-11-26T10:00:00Z") == "2026-11-26"
         try:
             parse_iso_date("garbage")
             raise AssertionError("bad date accepted")
         except ToolError:
             pass
-        p = Proton()
-        c = p._criteria("a@b.c", "hello", None, "2026-01-02", None, True)
-        assert 'FROM "a@b.c"' in c and "SUBJECT" in c and "SINCE 02-Jan-2026" in c and "UNSEEN" in c, c
-        assert _imap_quote('say "hi"') == "say hi"
         assert html_to_text("<p>Hello <b>world</b><script>x()</script></p>") == "Hello world"
-        assert _parse_proton_id("spam:42") == ("spam", 42)
-        assert _parse_draft_id("drafts:7@123") == (7, "123")
-        try:
-            _parse_proton_id("bad")
-            raise AssertionError("bad proton id accepted")
-        except ToolError:
-            pass
+        assert split_addrs("Alice <alice@example.com>, bob@example.com") == ["alice@example.com", "bob@example.com"]
+        assert addr_list("Alice <alice@example.com>")[0]["address"] == "alice@example.com"
         assert decode_id_token("x." + base64.urlsafe_b64encode(
             b'{"email":"me@example.com"}').decode().rstrip("=") + ".y") == "me@example.com"
 
-    def email_parse():
-        raw = ("From: Alice <alice@example.com>\r\nTo: bob@example.com\r\n"
-               "Subject: Test\r\nDate: Wed, 26 Nov 2026 10:00:00 +0000\r\n"
-               "Message-ID: <x@y>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello body\r\n")
-        eml = email.parser.BytesParser().parsebytes(raw.encode())
-        d = msg_dict(eml, "proton", "inbox:1", "inbox", "")
-        assert d["from"][0]["address"] == "alice@example.com"
-        assert d["snippet"] == "Hello body"
-        assert d["unread"] is True
+    def graph_mocks():
+        msg = {"id": "m1", "subject": "Hi", "from": {"emailAddress": {"name": "A", "address": "a@x.com"}},
+               "toRecipients": [{"emailAddress": {"address": "me@x.com"}}], "ccRecipients": [],
+               "receivedDateTime": "2026-11-26T10:00:00Z", "isRead": False, "bodyPreview": "hello",
+               "conversationId": "c1"}
+        routes = {
+            ("GET", "/me/mailFolders/#/messages"): lambda p, d, pr, calls: {"value": [msg]},
+            ("GET", "/me/messages/#"): lambda p, d, pr, calls: {**msg, "body": {"contentType": "Text", "content": "hello"}},
+            ("GET", "/me/messages"): lambda p, d, pr, calls: {"value": [msg]},
+            ("POST", "/me/messages"): lambda p, d, pr, calls: {"id": "d1", **d},
+            ("POST", "/me/messages/#/createReply"): lambda p, d, pr, calls: {"id": "d2", "subject": "RE: Hi",
+                                                                             "toRecipients": [{"emailAddress": {"address": "a@x.com"}}]},
+            ("PATCH", "/me/messages/#"): lambda p, d, pr, calls: {"id": "d2", **d},
+            ("POST", "/me/messages/#/send"): lambda p, d, pr, calls: {},
+            ("POST", "/me/messages/#/move"): lambda p, d, pr, calls: {"id": "m1"},
+            ("DELETE", "/me/messages/#"): lambda p, d, pr, calls: {},
+            ("GET", "/me/mailFolders/#"): lambda p, d, pr, calls: {"id": "folder-%s" % p.split("/")[-1]},
+        }
+        o = Outlook()
+        o._req = _FakeGraph(routes)
+        o.tokens = {"refresh_token": "r", "access_token": "t", "expires_at": time.time() + 3600}
 
-    def oauth_offline():
-        # login prompts must never run unattended; just verify config path wiring
+        lst = o.list_messages(limit=5, unread_only=True, sender="a@x.com", since="2026-11-01")
+        assert lst[0]["id"] == "m1" and lst[0]["account"] == "outlook"
+        c = o._req.calls[-1]
+        assert c["params"]["$filter"] == "isRead eq false and from/emailAddress/address eq 'a@x.com' and receivedDateTime ge 2026-11-01T00:00:00Z", c["params"]
+
+        assert o.search("hello")[0]["subject"] == "Hi"
+        assert o.read("m1")["body"] == "hello"
+        assert o.thread("m1")[0]["conversationId"] == "c1"
+
+        d = o.draft_new("a@x.com", "Subj", "Body")
+        assert d["draft_id"] == "d1"
+        assert o._req.calls[-1]["data"]["body"]["content"] == "Body"
+
+        r = o.draft_reply("m1", "reply body")
+        assert r["draft_id"] == "d2" and r["reply_to"] == ["a@x.com"]
+        patch = [c for c in o._req.calls if c["method"] == "PATCH"][-1]
+        assert patch["data"]["body"]["content"] == "reply body"
+
+        assert o.send_draft("d2")["sent"] is True
+        send = [c for c in o._req.calls if c["path"].endswith("/send")][-1]
+        assert send["method"] == "POST"
+
+        m = o.move(["m1"], "trash")
+        assert m["count"] == 1 and m["moved"] == ["m1"]
+        move_call = [c for c in o._req.calls if c["method"] == "POST" and c["path"].endswith("/move")][-1]
+        assert move_call["data"] == {"destinationId": "folder-deleteditems"}
+
+        dp = o.delete_permanently(["m1"])
+        assert dp["count"] == 1
+        seq = [c["method"] + " " + c["path"] for c in o._req.calls]
+        assert "POST /me/messages/m1/move" in seq and "DELETE /me/messages/m1" in seq
+
+    def token_logic():
+        # Expired tokens trigger a real refresh (writer no-op'd: no disk, no network).
+        saved_writer = write_json_secret
+
+        def noop_writer(path, obj):
+            pass
+
+        globals()["write_json_secret"] = noop_writer
+        try:
+            def fake_refresh(endpoint, fields):
+                assert endpoint == "token" and fields["grant_type"] == "refresh_token", fields
+                return {"access_token": "new", "refresh_token": "newr", "expires_in": 3600}
+
+            o = Outlook()
+            o.tokens = {"refresh_token": "r", "access_token": "old",
+                        "expires_at": time.time() - 5, "client_id": "c", "tenant": "consumers"}
+            o._token_endpoint = fake_refresh
+            assert o._access_token() == "new"
+            assert o.tokens["access_token"] == "new" and o.tokens["expires_at"] > time.time()
+
+            # Fresh token: no refresh call
+            def fail_refresh(endpoint, fields):
+                raise AssertionError("refresh must not be called for a fresh token")
+
+            o2 = Outlook()
+            o2.tokens = {"refresh_token": "r", "access_token": "fresh",
+                         "expires_at": time.time() + 3600, "client_id": "c"}
+            o2._token_endpoint = fail_refresh
+            assert o2._access_token() == "fresh"
+        finally:
+            globals()["write_json_secret"] = saved_writer
+
+        # Not configured -> clear error, no crash
+        o3 = Outlook()
+        o3.tokens = None
+        try:
+            o3._access_token()
+            raise AssertionError("unconfigured backend returned a token")
+        except ToolError as e:
+            assert "not signed in" in str(e)
+
+        # authorization_pending surfaces as ToolError for the poll loop
+        class E(Outlook):
+            def _token_endpoint(self, endpoint, fields):
+                raise ToolError("OAuth error: authorization_pending (400)")
+
+        try:
+            E()._token_endpoint("token", {})
+            raise AssertionError("no error raised")
+        except ToolError as e:
+            assert "authorization_pending" in str(e)
+
+    def offline():
         assert SECRETS_DIR.startswith(os.path.expanduser("~")), SECRETS_DIR
         assert read_json("/nonexistent/definitely-not-there.json") is None
+        # no Proton-era imports may remain in this module
+        m = sys.modules["__main__"]
+        for banned in ("imaplib", "smtplib", "getpass", "glob", "subprocess", "socket", "ssl", "email.parser"):
+            assert banned not in m.__dict__, banned
 
     check("hard gates (send/move/bulk/delete)", gates)
-    check("tool schemas and impl coverage", schemas)
-    check("IMAP criteria/date/id builders + HTML stripping", builders)
-    check("RFC822 parsing to shared message dict", email_parse)
-    check("offline paths (no network touched)", oauth_offline)
+    check("tool schemas (Outlook-only, no account/both/proton/bridge)", schemas)
+    check("date/address/html builders + id_token decode", builders)
+    check("mocked Microsoft Graph backend (list/search/read/thread/draft/send/move/delete)", graph_mocks)
+    check("OAuth token handling (refresh decision, unconfigured, pending)", token_logic)
+    check("offline paths + no Proton imports (no network touched)", offline)
     if failures:
         print("selfcheck FAILED: %s" % ", ".join(failures))
         return 1
@@ -1491,8 +1003,6 @@ def main(argv):
             serve()
         except KeyboardInterrupt:
             pass
-        finally:
-            _backend("proton").shutdown()
         return 0
     print(__doc__)
     return 2

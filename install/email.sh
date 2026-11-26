@@ -4,9 +4,9 @@ REPO_ROOT="${1:?repo root required}"
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# Email MCP integration (Outlook via Microsoft Graph + Proton Mail via Bridge IMAP/SMTP).
-# Idempotent. No secrets are created or read here; credentials are handled by
-# `email-mcp login outlook|proton` into ~/.config/opencode/secrets/ (0700/0600).
+# Email MCP integration (Outlook via Microsoft Graph, manual-only).
+# Idempotent. No secrets are created or read here; OAuth tokens are handled by
+# `email-mcp login outlook` into ~/.config/opencode/secrets/ (0700/0600).
 
 SRC="$REPO_ROOT/sources/email-mcp/email_mcp.py"
 BIN="$HOME/.local/bin/email-mcp"
@@ -58,7 +58,6 @@ cat > "$TMP_MANAGED" <<'JSON'
     { "action": "email_mcp_read_message", "resource": "*", "effect": "allow" },
     { "action": "email_mcp_read_thread", "resource": "*", "effect": "allow" },
     { "action": "email_mcp_list_spam", "resource": "*", "effect": "allow" },
-    { "action": "email_mcp_email_shutdown", "resource": "*", "effect": "allow" },
     { "action": "email_mcp_draft_new", "resource": "*", "effect": "ask" },
     { "action": "email_mcp_draft_reply", "resource": "*", "effect": "ask" },
     { "action": "email_mcp_send_draft", "resource": "*", "effect": "ask" },
@@ -77,28 +76,23 @@ fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
 NODE
   node "$REPO_ROOT/install/merge_opencode_config.mjs" "$LIVE_OC" "$TMP_MANAGED" >/dev/null
   ok "Ensured 'email-mcp' MCP server (disabled by default) and read/ask permission rules in $LIVE_OC (non-destructive)"
+  # Remove the stale email_shutdown permission rule from the previous Proton-capable version
+  node - "$LIVE_OC" <<'NODE'
+import fs from 'node:fs';
+const p = process.argv[2];
+const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+if (Array.isArray(j.permissions)) {
+  const before = j.permissions.length;
+  j.permissions = j.permissions.filter(r => !(r && r.action === 'email_mcp_email_shutdown'));
+  if (j.permissions.length !== before) {
+    fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+    console.log('removed stale email_mcp_email_shutdown permission rule');
+  }
+}
+NODE
 else
   warn "node not available; skipped MCP config merge into $LIVE_OC"
 fi
 rm -f "$TMP_MANAGED"
 
-# Proton Mail Bridge: official Arch extra package, never started/enabled here
-if have_cmd pacman; then
-  if pacman -Q protonmail-bridge >/dev/null 2>&1; then
-    ok "protonmail-bridge installed ($(pacman -Q protonmail-bridge | awk '{print $2}'))"
-  else
-    warn "protonmail-bridge not installed; install from the official Arch repo: sudo pacman -S protonmail-bridge"
-  fi
-fi
-
-# Bridge systemd user unit ships with the package but must never be enabled here
-UNIT_DIR="$HOME/.config/systemd/user"
-if [[ -f /usr/lib/systemd/user/protonmail-bridge.service ]] && have_cmd systemctl; then
-  if systemctl --user is-enabled protonmail-bridge >/dev/null 2>&1; then
-    warn "protonmail-bridge user service is enabled (was not enabled by this installer; consider: systemctl --user disable protonmail-bridge)"
-  else
-    ok "protonmail-bridge user service not enabled (on-demand only)"
-  fi
-fi
-
-ok "Email MCP configured. Connect it in OpenCode via /mcps when needed; auth: email-mcp login outlook / login proton"
+ok "Email MCP configured. Connect it in OpenCode via /mcps when needed; auth: email-mcp login outlook [--write]"
