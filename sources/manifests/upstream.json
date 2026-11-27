@@ -20,6 +20,14 @@
       "releaseDate": "2026-11-24",
       "localPath": null
     },
+    "magnitude": {
+      "repo": "https://github.com/magnitudedev/magnitude",
+      "version": "0.3.7",
+      "installScriptSha256": "355668a71b04cfea9cf5f2dbf6b956a2c635d5bc6a582cc187109615af7635ae",
+      "installScriptUrl": "https://magnitude.dev/install.sh",
+      "localPath": "sources/magnitude",
+      "note": "Vendored install.sh is reviewed and pinned; it verifies the release publisher signature and SHA-256 itself."
+    },
     "graphify": {
       "repo": "https://github.com/Graphify-Labs/graphify",
       "commit": "480b61ed91cbc08177dc2c60caa9ffd6c9b95749",

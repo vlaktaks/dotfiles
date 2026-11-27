@@ -67,4 +67,16 @@ if [[ -d "$MANAGED_OC/commands" ]]; then
   shopt -u nullglob
 fi
 
-ok "OpenCode configuration/skills linked from dotfiles (secrets like service.json left local)"
+# Link managed agents (subagent definitions; each *.md under agents/)
+if [[ -d "$MANAGED_OC/agents" ]]; then
+  mkdir -p "$LIVE_OC/agents"
+  shopt -s nullglob
+  for src in "$MANAGED_OC/agents"/*.md; do
+    [[ -f "$src" ]] || continue
+    name="$(basename "$src")"
+    link_path "$src" "$LIVE_OC/agents/$name"
+  done
+  shopt -u nullglob
+fi
+
+ok "OpenCode configuration/skills/agents linked from dotfiles (secrets like service.json left local)"

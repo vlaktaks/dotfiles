@@ -215,6 +215,79 @@ else
   warnmsg "ollama model tags not verifiable (server unreachable)"
 fi
 
+# Magnitude
+MAG_CMD="$HOME/.magnitude/bin/magnitude"
+have_cmd "$MAG_CMD" || MAG_CMD="$(command -v magnitude 2>/dev/null || true)"
+if [[ -n "$MAG_CMD" ]]; then
+  mag_v="$("$MAG_CMD" --version 2>/dev/null | head -n1)"
+  pass "magnitude CLI available ($mag_v)"
+else
+  warnmsg "magnitude CLI not installed/on PATH"
+fi
+if [[ -f "$HOME/.config/systemd/user/magnitude.service" ]]; then
+  pass "magnitude systemd user unit present"
+else
+  warnmsg "magnitude systemd user unit not found"
+fi
+if have_cmd curl; then
+  if curl -fsS "http://127.0.0.1:10100/inference/v1/models" >/dev/null 2>&1; then
+    pass "Magnitude inference API reachable on loopback:10100"
+  else
+    warnmsg "Magnitude not reachable on localhost:10100 (service may not be running)"
+  fi
+fi
+if [[ -f "$HOME/.magnitude/config.json" ]]; then
+  if grep -q '"enabled": true' "$HOME/.magnitude/config.json"; then
+    grep -q '"apiKey"' "$HOME/.magnitude/config.json" \
+      && pass "Magnitude network access enabled with API key" \
+      || failmsg "Magnitude network access enabled but no API key set"
+  else
+    pass "Magnitude network access disabled (loopback only)"
+  fi
+fi
+if have_cmd node && [[ -f "$LIVE_OC/opencode.json" ]]; then
+  node -e "
+    const j = JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
+    const m = j.provider && j.provider.magnitude;
+    if (!m || m.npm !== '@ai-sdk/openai-compatible' || !m.models) process.exit(1);
+    console.log(Object.keys(m.models).length);
+  " "$LIVE_OC/opencode.json" >/tmp/dotfiles-verify-magnitude.txt 2>/dev/null && {
+    n="$(cat /tmp/dotfiles-verify-magnitude.txt)"
+    pass "OpenCode provider 'magnitude' present ($n models)"
+  } || warnmsg "OpenCode provider 'magnitude' not found in $LIVE_OC/opencode.json"
+fi
+
+# Native subagents (six managed agents, least-privilege permissions)
+MANAGED_AGENTS="$MANAGED_OC/agents"
+AGENT_NAMES=(architect developer reviewer security tester researcher)
+if [[ -d "$MANAGED_AGENTS" ]]; then
+  agents_ok=0
+  for a in "${AGENT_NAMES[@]}"; do
+    src="$MANAGED_AGENTS/$a.md"
+    dst="$LIVE_OC/agents/$a.md"
+    [[ -f "$src" ]] || { failmsg "agent definition missing from repo: $a"; continue; }
+    grep -q '^mode: subagent$' "$src" \
+      && pass "agent $a: mode=subagent" \
+      || failmsg "agent $a: missing 'mode: subagent'"
+    grep -q '^description: .*' "$src" \
+      && pass "agent $a: description present" \
+      || failmsg "agent $a: description missing"
+    grep -q 'effect: deny' "$src" \
+      && pass "agent $a: deny rules present" \
+      || failmsg "agent $a: no deny rules"
+    if [[ -L "$dst" ]] && [[ "$(readlink -f "$dst" || true)" == "$(readlink -f "$src")" ]]; then
+      agents_ok=$((agents_ok+1))
+    else
+      warnmsg "agent $a not symlinked into ~/.config/opencode/agents"
+    fi
+  done
+  if (( agents_ok == ${#AGENT_NAMES[@]} )); then
+    pass "all ${#AGENT_NAMES[@]} managed agents linked into ~/.config/opencode/agents"
+  fi
+else
+  warnmsg "no managed agents directory at $MANAGED_AGENTS"
+fi
+
 # Email MCP (Outlook)
 EMCP="$HOME/.local/bin/email-mcp"
 if [[ -x "$EMCP" ]]; then

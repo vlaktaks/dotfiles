@@ -137,6 +137,7 @@ Managed via `./install/install.sh` (idempotent, non-destructive merge of existin
 - **Config:** managed merge into `~/.config/opencode/opencode.json` (keeps `update` behavior and existing settings; adds required plugin/provider entries without deleting others).
 - **Global instructions:** `~/.config/opencode/AGENTS.md` symlinked to `.config/opencode/AGENTS.md` in this repo.
 - **Global skills:** each managed skill directory in `.config/opencode/skills/` is symlinked into `~/.config/opencode/skills/<skill-name>/` so OpenCode can discover them in all projects.
+- **Native subagents:** each managed `*.md` agent in `.config/opencode/agents/` is symlinked into `~/.config/opencode/agents/` (architect, developer, reviewer, security, tester, researcher).
 - **Secrets/local state:** files like `~/.config/opencode/service.json` remain local and untracked.
 
 #### Ponytail
@@ -170,6 +171,23 @@ Managed via `./install/install.sh` (idempotent, non-destructive merge of existin
   - `ollama pull inkling-2-mini`, then re-run `./install/install.sh` (it creates the `inkling-2-mini:16k` tag automatically) — or manually: `ollama create inkling-2-mini:16k -f -` with a Modelfile containing `FROM inkling-2-mini:latest` and `PARAMETER num_ctx 16384`
   - `ollama pull qwen3.8:27b`
 - **OpenCode discovery:** OpenCode probes `http://127.0.0.1:11434`, discovers completion-capable models, and lists them as `ollama/*` in `/models`; no provider entry or key is required.
+
+#### Magnitude
+
+- **Upstream:** https://github.com/magnitudedev/magnitude (Apache-2.0; pinned in `sources/manifests/upstream.json`; reviewed installer vendored at `sources/magnitude/install.sh`)
+- **Installation:** user-level CLI-only install into `~/.magnitude/` (`install/magnitude.sh` runs the vendored, pinned installer; it verifies the publisher signature and SHA-256 itself, needs no sudo, and never overwrites an existing install).
+- **OpenCode provider integration:** adds a non-destructive `provider.magnitude` entry in `~/.config/opencode/opencode.json` (OpenAI-compatible provider via `@ai-sdk/openai-compatible`, base URL `http://127.0.0.1:10100/inference/v1`, local placeholder key). Exposed models: `magnitude/qwen3.5-4b:gguf:q4` and `magnitude/qwen3.6-35b-a3b:gguf:q4` (both 32768 context / 8192 output).
+- **Service:** creates `~/.config/systemd/user/magnitude.service` if missing; not auto-enabled. Opt in with `MAGNITUDE_ENABLE_SERVICE=1 ./install/install.sh`. To survive logout: `sudo loginctl enable-linger $USER`.
+- **Security posture:** loopback-only API by default. LAN access requires an explicit opt-in (`MAGNITUDE_NETWORK_KEY=<hex>` plus `MAGNITUDE_BIND`), binds one address, and requires the key as a Bearer token.
+- **Models are never downloaded by default** (opt in with `MAGNITUDE_PULL_MODEL=<model-id>`); Magnitude loads models on demand and unloads them after idle time.
+- **OmniRoute note:** Magnitude is reached directly by OpenCode. OmniRoute 3.8.x can attach a custom OpenAI-compatible endpoint, but its gateway refuses non-catalog model IDs at request time (verified), so Magnitude models are not routed through OmniRoute on this setup.
+
+#### Native subagents (architect, developer, reviewer, security, tester, researcher)
+
+- **Location:** `.config/opencode/agents/*.md`, symlinked into `~/.config/opencode/agents/` (V2 frontmatter: `mode: subagent`, per-agent `model`, `steps`, ordered `permissions`).
+- **Coordination:** the primary agent stays the coordinator; no nested subagent delegation is allowed on any of the six.
+- **Models:** defaults are set per agent (see `AGENTS.md`); edit the `model:` line to reassign. Fallback policy: the coordinator picks an explicitly configured same-tier alternative or runs the task itself — never an implicit downgrade.
+- **Least privilege:** architect/reviewer/researcher are strict read-only (deny edit/shell/execute). Security is read-only with a narrow read-only shell inspection allowlist and loads the `linux-security-check` skill. Developer may edit project files but cannot push/commit/sudo or touch system settings. Tester may run test commands but destructive commands are denied.
 
 #### Graphify
 - **Upstream:** https://github.com/Graphify-Labs/graphify (pinned in manifest; curated source snapshot in `sources/graphify/` containing OpenCode skill sources + metadata)
